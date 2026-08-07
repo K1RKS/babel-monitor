@@ -81,6 +81,38 @@
     word-break: break-word;
   }
   .events-empty { color: var(--muted); }
+  .sec-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    margin: 0 0 10px;
+  }
+  .sec-head h2 { margin: 0; }
+  .sec-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    margin-left: auto;
+  }
+  .sec-filter input { margin: 0; cursor: pointer; }
+  .wg-est {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    vertical-align: -1px;
+  }
+  .wg-est.on { background: var(--accent); }
+  .wg-status-live { color: var(--ok); }
+  .wg-status-quiet { color: var(--warn); }
+  .wg-status-never { color: var(--muted); }
+  .wg-empty { color: var(--muted); font-size: 12px; padding: 4px 0; }
   section {
     background: var(--panel);
     border: 1px solid var(--line);
@@ -572,6 +604,49 @@
   <section>
     <h2>Routing events</h2>
     <pre class="events-box" id="eventsBox"><span class="events-empty">Loading…</span></pre>
+  </section>
+  <section id="wgScSection" hidden>
+    <div class="sec-head">
+      <h2>WireGuard</h2>
+      <label class="sec-filter" title="Hide disabled tunnels">
+        <input type="checkbox" id="wgScEnabledOnly" checked>
+        Enabled only
+      </label>
+    </div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th><th>Role</th><th>Last heard</th><th>Status</th>
+            <th>RX / TX</th><th>RX/TX rate</th><th>MTU</th><th>Contact</th><th>Port</th>
+          </tr>
+        </thead>
+        <tbody id="wgScBody"></tbody>
+      </table>
+    </div>
+    <div class="wg-empty" id="wgScEmpty" hidden>No enabled tunnels</div>
+  </section>
+  <section id="wgMobileSection" hidden>
+    <div class="sec-head">
+      <h2>WireGuard Mobile</h2>
+      <label class="sec-filter" title="Hide disabled mobile clients">
+        <input type="checkbox" id="wgMobileEnabledOnly" checked>
+        Enabled only
+      </label>
+    </div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th><th title="First claim used — not live connection">Est.</th>
+            <th>Last heard</th><th>Status</th>
+            <th>RX / TX</th><th>RX/TX rate</th><th>MTU</th><th>Notes</th><th>Address</th><th>Port</th>
+          </tr>
+        </thead>
+        <tbody id="wgMobileBody"></tbody>
+      </table>
+    </div>
+    <div class="wg-empty" id="wgMobileEmpty" hidden>No enabled mobile clients</div>
   </section>
 </main>
 <div class="modal-back" id="ringModal" hidden>
@@ -1897,6 +1972,7 @@
     }
     pushWg("WG Server Tunnels", wg.server_tunnels);
     pushWg("WG Server Clients", wg.clients);
+    pushWg("WG Mobile", wg.mobile);
     $("kpis").innerHTML = items.map(function (it) {
       const klass = it[3] ? " " + it[3] : "";
       return '<div class="kpi' + klass + '" title="' + escAttr(it[2]) +
@@ -1955,6 +2031,164 @@
       return fmtEventTime(e.t) + "  " + (e.type || "?") + "  " + (e.detail || "");
     }).join("\n");
     box.scrollTop = box.scrollHeight;
+  }
+
+  const WG_SC_FILTER_KEY = "bm_wg_sc_enabled_only";
+  const WG_M_FILTER_KEY = "bm_wg_m_enabled_only";
+  let wgScRows = [];
+  let wgMobileRows = [];
+
+  function loadWgFilter(key, checkboxId) {
+    const el = $(checkboxId);
+    if (!el) return true;
+    try {
+      const v = localStorage.getItem(key);
+      if (v === "0") el.checked = false;
+      else if (v === "1") el.checked = true;
+      /* default: checked (HTML) when unset */
+    } catch (e) { /* ignore */ }
+    return !!el.checked;
+  }
+
+  function saveWgFilter(key, checked) {
+    try { localStorage.setItem(key, checked ? "1" : "0"); } catch (e) { /* ignore */ }
+  }
+
+  function fmtBytesMiB(n) {
+    if (n == null || n === "") return "—";
+    const v = Number(n);
+    if (v !== v || v < 0) return "—";
+    if (v < 1024) return v + " B";
+    if (v < 1048576) return (v / 1024).toFixed(1) + " KB";
+    return (v / 1048576).toFixed(2) + " MiB";
+  }
+
+  function fmtRateBps(n) {
+    if (n == null || n === "") return "—";
+    const v = Number(n);
+    if (v !== v || v < 0) return "—";
+    if (v < 1024) return v + " B/s";
+    if (v < 1048576) return (v / 1024).toFixed(1) + " KB/s";
+    return (v / 1048576).toFixed(2) + " MB/s";
+  }
+
+  function fmtHeard(hs) {
+    const t = Number(hs) || 0;
+    if (t <= 0) return { text: "never", title: "No handshake yet", age: null };
+    const age = Math.max(0, Math.floor(Date.now() / 1000 - t));
+    let text;
+    if (age < 60) text = age + "s ago";
+    else if (age < 3600) text = Math.floor(age / 60) + "m ago";
+    else if (age < 86400) text = Math.floor(age / 3600) + "h ago";
+    else text = Math.floor(age / 86400) + "d ago";
+    return { text: text, title: fmtEventTime(t), age: age };
+  }
+
+  function wgStatusHtml(row) {
+    if (row.live) {
+      return '<span class="wg-status-live">Live</span>';
+    }
+    const hs = Number(row.last_handshake) || 0;
+    if (hs <= 0) {
+      return '<span class="wg-status-never">Never</span>';
+    }
+    return '<span class="wg-status-quiet">Quiet</span>';
+  }
+
+  function escText(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function renderWgSc() {
+    const sec = $("wgScSection");
+    const body = $("wgScBody");
+    const empty = $("wgScEmpty");
+    const filt = $("wgScEnabledOnly");
+    if (!sec || !body) return;
+    if (!wgScRows.length) {
+      sec.hidden = true;
+      return;
+    }
+    sec.hidden = false;
+    const onlyEn = filt ? !!filt.checked : true;
+    const rows = onlyEn ? wgScRows.filter(function (r) { return r.enabled; }) : wgScRows;
+    if (!rows.length) {
+      body.innerHTML = "";
+      if (empty) empty.hidden = false;
+      return;
+    }
+    if (empty) empty.hidden = true;
+    body.innerHTML = rows.map(function (r) {
+      const heard = fmtHeard(r.last_handshake);
+      const role = r.role === "server_tunnel" ? "Server tunnel" : "Client";
+      const rxTx = fmtBytesMiB(r.rx_bytes) + " / " + fmtBytesMiB(r.tx_bytes);
+      const rate = fmtRateBps(r.rx_rate_bps) + " / " + fmtRateBps(r.tx_rate_bps);
+      const mtu = r.mtu ? String(r.mtu) : "—";
+      return "<tr>" +
+        "<td>" + escText(r.name || "—") + "</td>" +
+        "<td>" + role + "</td>" +
+        '<td title="' + escAttr(heard.title) + '">' + escText(heard.text) + "</td>" +
+        "<td>" + wgStatusHtml(r) + "</td>" +
+        '<td title="Lifetime since iface/peer up">' + rxTx + "</td>" +
+        "<td>" + rate + "</td>" +
+        "<td>" + mtu + "</td>" +
+        "<td>" + escText(r.contact || "—") + "</td>" +
+        "<td>" + escText(r.port || "—") + "</td>" +
+        "</tr>";
+    }).join("");
+  }
+
+  function renderWgMobile() {
+    const sec = $("wgMobileSection");
+    const body = $("wgMobileBody");
+    const empty = $("wgMobileEmpty");
+    const filt = $("wgMobileEnabledOnly");
+    if (!sec || !body) return;
+    if (!wgMobileRows.length) {
+      sec.hidden = true;
+      return;
+    }
+    sec.hidden = false;
+    const onlyEn = filt ? !!filt.checked : true;
+    const rows = onlyEn ? wgMobileRows.filter(function (r) { return r.enabled; }) : wgMobileRows;
+    if (!rows.length) {
+      body.innerHTML = "";
+      if (empty) empty.hidden = false;
+      return;
+    }
+    if (empty) empty.hidden = true;
+    body.innerHTML = rows.map(function (r) {
+      const heard = fmtHeard(r.last_handshake);
+      const rxTx = fmtBytesMiB(r.rx_bytes) + " / " + fmtBytesMiB(r.tx_bytes);
+      const rate = fmtRateBps(r.rx_rate_bps) + " / " + fmtRateBps(r.tx_rate_bps);
+      const mtu = r.mtu ? String(r.mtu) : "—";
+      const estOn = !!r.established;
+      const est = '<span class="wg-est' + (estOn ? " on" : "") +
+        '" title="First claim used — not live connection"></span>';
+      return "<tr>" +
+        "<td>" + escText(r.name || "—") + "</td>" +
+        "<td>" + est + "</td>" +
+        '<td title="' + escAttr(heard.title) + '">' + escText(heard.text) + "</td>" +
+        "<td>" + wgStatusHtml(r) + "</td>" +
+        '<td title="Lifetime since iface/peer up">' + rxTx + "</td>" +
+        "<td>" + rate + "</td>" +
+        "<td>" + mtu + "</td>" +
+        "<td>" + escText(r.notes || "—") + "</td>" +
+        "<td>" + escText(r.address || "—") + "</td>" +
+        "<td>" + escText(r.port || "—") + "</td>" +
+        "</tr>";
+    }).join("");
+  }
+
+  function renderWg(live) {
+    const wg = live.wg || {};
+    wgScRows = wg.sc || [];
+    wgMobileRows = wg.mobile_peers || [];
+    renderWgSc();
+    renderWgMobile();
   }
 
   function legendItemHtml(s) {
@@ -2548,6 +2782,7 @@
     const live = await getJsonRetry(API + "?api=live");
     renderKpis(live);
     renderNeigh(live.neighbors || []);
+    renderWg(live);
   }
 
   async function refreshEvents() {
@@ -2863,6 +3098,17 @@
     ensureAdminThenSetup().catch(function (e) {
       setErr("Setup: " + e.message);
     });
+  });
+
+  loadWgFilter(WG_SC_FILTER_KEY, "wgScEnabledOnly");
+  loadWgFilter(WG_M_FILTER_KEY, "wgMobileEnabledOnly");
+  $("wgScEnabledOnly").addEventListener("change", function (ev) {
+    saveWgFilter(WG_SC_FILTER_KEY, !!ev.target.checked);
+    renderWgSc();
+  });
+  $("wgMobileEnabledOnly").addEventListener("change", function (ev) {
+    saveWgFilter(WG_M_FILTER_KEY, !!ev.target.checked);
+    renderWgMobile();
   });
   $("ringModalClose").addEventListener("click", cancelRingChanges);
   $("ringModal").addEventListener("click", function (ev) {

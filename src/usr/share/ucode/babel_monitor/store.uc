@@ -71,12 +71,16 @@ export function createStore(sample_cap)
             cpu_peak_total: null,
             cpu_peak_idle: null,
             cpu_peak_pct: 0,
-            mem_total_kb: null
+            mem_total_kb: null,
+            wg_xfer: {}
         },
         live_neighbors: [],
         wg: {
             server_tunnels: { live: 0, active: 0, total: 0 },
-            clients: { live: 0, active: 0, total: 0 }
+            clients: { live: 0, active: 0, total: 0 },
+            mobile: { live: 0, active: 0, total: 0 },
+            sc: [],
+            mobile_peers: []
         },
         identity: {
             node_id: "",

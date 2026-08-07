@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>babel-monitor — WG live panels plan</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --fg: #e8eaed;
+    --muted: #9aa0a6;
+    --card: #161a22;
+    --border: #2a2f3a;
+    --accent: #8ab4f8;
+    --ok: #81c995;
+    --warn: #fdd663;
+    --info-border: #3d5a80;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 15px/1.55 system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    padding: 24px;
+    max-width: 960px;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 6px; }
+  h2 { font-size: 1.15rem; margin: 28px 0 10px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { font-size: 1rem; margin: 18px 0 8px; color: var(--accent); }
+  p { margin: 0 0 10px; color: var(--muted); }
+  .lead { color: var(--muted); max-width: 72ch; }
+  ul, ol { color: var(--muted); margin: 0 0 12px; padding-left: 1.25rem; }
+  li { margin: 4px 0; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.88em;
+    background: #1c212b;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--fg);
+  }
+  pre {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    color: var(--fg);
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    margin: 10px 0 14px;
+  }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; }
+  .pill {
+    display: inline-block;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 12px;
+    color: var(--fg);
+  }
+  .pill.accent { color: var(--accent); border-color: var(--info-border); }
+  .pill.ok { color: var(--ok); border-color: #2d5a3d; }
+  .pill.warn { color: var(--warn); border-color: #5a4a20; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    margin: 8px 0 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td { color: var(--muted); }
+  td:first-child { color: var(--fg); }
+  .callout {
+    border: 1px solid var(--info-border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: var(--card);
+    margin: 14px 0;
+    color: var(--muted);
+  }
+  .callout strong { display: block; margin-bottom: 4px; color: var(--fg); }
+  .todos { list-style: none; padding: 0; margin: 0 0 16px; }
+  .todos li {
+    display: flex; gap: 10px; align-items: flex-start;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    padding: 10px 12px;
+    margin: 8px 0;
+    color: var(--muted);
+  }
+  .todos .status {
+    flex: 0 0 auto;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 1px solid #5a4a20;
+    color: var(--warn);
+    border-radius: 999px;
+    padding: 2px 8px;
+    margin-top: 2px;
+  }
+  .twin-banner {
+    border: 1px solid #2d5a3d;
+    background: #142018;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 0 0 18px;
+    color: var(--ok);
+    font-size: 13px;
+  }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 28px; }
+  strong.inline { color: var(--fg); }
+  .icon-demo {
+    display: inline-flex; gap: 16px; align-items: center;
+    margin: 8px 0 14px; color: var(--muted); font-size: 13px;
+  }
+  .icon-demo .dot {
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid var(--accent); vertical-align: -1px; margin-right: 6px;
+  }
+  .icon-demo .dot.filled { background: var(--accent); }
+</style>
+</head>
+<body>
+  <div class="twin-banner">
+    HTML twin of plan <code>babel-monitor_wg-live-panels</code> —
+    keep in sync when the plan changes. Path: <code>reports/babel-monitor-wg-live-panels.html</code>
+  </div>
+
+  <h1>WireGuard live KPIs + detail tables</h1>
+  <p class="lead">
+    Optional <strong class="inline">WG Mobile</strong> KPI, plus exactly <strong class="inline">two</strong> bottom live tables
+    (original WireGuard tunnels, and WG-Mobile). Each table has its own Enabled-only filter.
+    Live only — never in the sample ring.
+  </p>
+  <div class="pills">
+    <span class="pill accent">babel-monitor</span>
+    <span class="pill accent">wireguard-mobile sibling</span>
+    <span class="pill ok">live only · no ring</span>
+    <span class="pill ok">2 tables · per-table filter</span>
+    <span class="pill warn">API_VERSION bump · SCHEMA unchanged</span>
+  </div>
+
+  <h2>Todos</h2>
+  <ul class="todos">
+    <li><span class="status done">done</span> Expand <code>readWg*</code> + <code>store.wg</code> + <code>store.last.wg_xfer</code> for rates; ring untouched</li>
+    <li><span class="status done">done</span> Expose on <code>api=live</code>; bump <code>API_VERSION</code></li>
+    <li><span class="status done">done</span> KPI: <strong class="inline">WG Mobile</strong> <code>live/active/total</code> when total &gt; 0</li>
+    <li><span class="status done">done</span> Two tables, each with Enabled-only (default on); rate, MTU, contact/notes, established icon</li>
+    <li><span class="status done">done</span> README + package version bump on implement</li>
+    <li><span class="status">planned</span> Manual: SC only / WG-M only / neither / filters / established icon</li>
+  </ul>
+
+  <h2>Goal</h2>
+  <ol>
+    <li>KPI strip: add optional <strong class="inline">WG Mobile</strong>.</li>
+    <li>Exactly two bottom sections if present: <strong class="inline">WireGuard</strong> (original servers+clients) and <strong class="inline">WireGuard Mobile</strong>.</li>
+    <li>Each table: own <strong class="inline">Enabled only</strong> filter (default on, separate <code>localStorage</code>).</li>
+    <li>v1 columns include name, last heard, lifetime RX/TX, <strong class="inline">RX/TX rate</strong>, <strong class="inline">MTU</strong>, <strong class="inline">contact/notes</strong>, and WG-M <strong class="inline">established</strong> icon.</li>
+    <li>Not stored in the sample ring.</li>
+  </ol>
+
+  <h2>Two tables</h2>
+  <table>
+    <thead><tr><th>Section</th><th>Source</th><th>Filter</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong class="inline">WireGuard</strong></td>
+        <td>Original node↔node tunnels (<code>wgc*</code> / <code>wgs*</code>, UCI <code>wireguard</code> client+server)</td>
+        <td><code>bm_wg_sc_enabled_only</code> (default on)</td>
+      </tr>
+      <tr>
+        <td><strong class="inline">WireGuard Mobile</strong></td>
+        <td>WG-M peers (<code>wgm*</code>, UCI <code>wireguard_mobile</code>)</td>
+        <td><code>bm_wg_m_enabled_only</code> (default on)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>No third table — servers and clients share the WireGuard table (Role column).</p>
+
+  <h2>Architecture</h2>
+  <pre>collectSample()
+  ├─ pushSample(sample)          ← ring UNCHANGED
+  ├─ store.live_neighbors = …
+  ├─ store.last.wg_xfer = {…}    ← scratch for rate Δ (not ring)
+  └─ store.wg = {
+       server_tunnels / clients / mobile: {live,active,total},
+       sc: [ … ],
+       mobile_peers: [ … ]
+     }</pre>
+  <div class="callout">
+    <strong>Versioning</strong>
+    Bump <code>API_VERSION</code> only. Prefer one <code>wg show all dump</code> parse per sample; cap rows (~64).
+  </div>
+
+  <h2>UI columns (v1)</h2>
+  <h3>WireGuard (original tunnels)</h3>
+  <ul>
+    <li>Name · Role · Last heard · Status · RX/TX (lifetime) · RX/TX rate · MTU · Contact · Port</li>
+  </ul>
+  <h3>WireGuard Mobile</h3>
+  <ul>
+    <li>Name · <strong class="inline">Est.</strong> (icon) · Last heard · Status · RX/TX · RX/TX rate · MTU · Notes · Address · Port</li>
+  </ul>
+  <div class="icon-demo">
+    <span><span class="dot filled"></span>Established (filled)</span>
+    <span><span class="dot"></span>Not established (unfilled)</span>
+  </div>
+  <p>Tooltip on Est.: “First claim used — not live connection.” Live status stays a separate column.</p>
+
+  <h2>Rates &amp; bytes</h2>
+  <ul>
+    <li><strong class="inline">Lifetime RX/TX</strong> from <code>wg</code> — tooltip “since iface/peer up”.</li>
+    <li><strong class="inline">RX/TX rate</strong> from <code>store.last.wg_xfer</code> deltas over the sample interval (first sample after appear = —/0).</li>
+    <li>True rolling 24h totals out of scope (would need ring/flash).</li>
+  </ul>
+
+  <h2>MTU &amp; notes</h2>
+  <ul>
+    <li>SC: mesh wireguard network MTU / iface when available.</li>
+    <li>WG-M: resolved effective MTU (<code>last_mtu</code> / fixed / default / sysfs).</li>
+    <li>SC Contact = UCI <code>contact</code>; WG-M Notes = UCI <code>notes</code>.</li>
+  </ul>
+
+  <h2>Later extras (optional)</h2>
+  <ul>
+    <li>Endpoint · Allowed IPs · Keepalive · Aggregate live bytes on KPI</li>
+  </ul>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>No WG fields in sample ring / series / history charts</li>
+    <li>No flash writes for WG metrics; no hard dependency on <code>wireguard-mobile</code></li>
+    <li>No tunnel CRUD; no fake 24h byte window; no third table</li>
+  </ul>
+
+  <h2>Confirmed</h2>
+  <ul>
+    <li>Two tables: original WireGuard + WG-Mobile; each with Enabled-only</li>
+    <li>v1 includes rate, MTU, contact/notes, established filled/unfilled icon</li>
+    <li>Sections below Routing events</li>
+  </ul>
+
+  <p class="meta">
+    Plan: <code>.cursor/plans/babel-monitor_wg-live-panels.plan.md</code> ·
+    Package overview twin: <a href="babel-monitor-package.html">babel-monitor-package.html</a>
+  </p>
+</body>
+</html>

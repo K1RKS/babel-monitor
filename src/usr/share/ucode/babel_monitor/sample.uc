@@ -67,73 +67,263 @@ function countArednlinkHosts()
 }
 
 /**
- * WireGuard tunnel counts from /etc/config.mesh/wireguard + latest-handshakes.
- * UCI type "client" = server tunnels on this node (wgc*); "server" = client tunnels (wgs*).
- * total = config entries; active = enabled=1; live = handshake within 300s.
+ * WireGuard live stats (not stored in the sample ring).
+ * SC: /etc/config.mesh/wireguard — type "client" = server tunnels (wgc*);
+ *     type "server" = client tunnels (wgs*).
+ * Mobile: /etc/config/wireguard_mobile type "client" (wgm*).
+ * total = config entries; active = enabled; live = handshake within 300s.
+ * Rates use store.last.wg_xfer scratch (Δ since previous sample).
  */
-function readWgTunnelStats()
+function readIfaceMtu(ifn)
+{
+    if (!ifn || ifn === "") {
+        return 0;
+    }
+    const p = `/sys/class/net/${ifn}/mtu`;
+    if (!fs.access(p)) {
+        return 0;
+    }
+    return int(trim(fs.readfile(p) || "0")) || 0;
+}
+
+function peerMatch(blob, pubkey)
+{
+    if (!blob || !pubkey || blob === "" || pubkey === "") {
+        return false;
+    }
+    return index(blob, pubkey) >= 0;
+}
+
+function findPeerByKey(peers, keyblob)
+{
+    if (!keyblob || keyblob === "") {
+        return null;
+    }
+    for (let i = 0; i < length(peers); i++) {
+        if (peerMatch(keyblob, peers[i].pubkey)) {
+            return peers[i];
+        }
+    }
+    return null;
+}
+
+function readWgLive(store)
 {
     const out = {
         server_tunnels: { live: 0, active: 0, total: 0 },
-        clients: { live: 0, active: 0, total: 0 }
+        clients: { live: 0, active: 0, total: 0 },
+        mobile: { live: 0, active: 0, total: 0 },
+        sc: [],
+        mobile_peers: []
     };
+    const now = time();
+    const peers = [];
+    const new_xfer = {};
+    const prev_xfer = (store && store.last && store.last.wg_xfer) ? store.last.wg_xfer : {};
+    const cap = common.WG_PEER_CAP;
+
+    if (fs.access("/usr/bin/wg")) {
+        const w = fs.popen("/usr/bin/wg show all dump 2>/dev/null");
+        if (w) {
+            for (let line = w.read("line"); length(line); line = w.read("line")) {
+                const v = split(trim(line), /\t/);
+                /* Peer lines: ifname pubkey psk endpoint allowed hs rx tx keepalive (9 fields) */
+                if (!v || length(v) < 9) {
+                    continue;
+                }
+                const ifn = v[0];
+                const pubkey = v[1];
+                if (!pubkey || pubkey === "(none)") {
+                    continue;
+                }
+                const hs = int(v[5] || 0);
+                const rx = int(v[6] || 0);
+                const tx = int(v[7] || 0);
+                let endpoint = v[3] || "";
+                if (endpoint === "(none)") {
+                    endpoint = "";
+                }
+                let rx_rate = 0;
+                let tx_rate = 0;
+                const prev = prev_xfer[pubkey];
+                if (prev && prev.t && now > prev.t) {
+                    const dt = now - prev.t;
+                    rx_rate = int(max(0, rx - prev.rx) / dt);
+                    tx_rate = int(max(0, tx - prev.tx) / dt);
+                }
+                new_xfer[pubkey] = { rx: rx, tx: tx, t: now };
+                push(peers, {
+                    iface: ifn,
+                    pubkey: pubkey,
+                    endpoint: endpoint,
+                    last_handshake: hs,
+                    live: (hs > 0 && hs + 300 > now) ? true : false,
+                    rx_bytes: rx,
+                    tx_bytes: tx,
+                    rx_rate_bps: rx_rate,
+                    tx_rate_bps: tx_rate,
+                    mtu: readIfaceMtu(ifn)
+                });
+            }
+            w.close();
+        }
+    }
+    if (store && store.last) {
+        store.last.wg_xfer = new_xfer;
+    }
+
+    let sc_mtu_default = 0;
     let cm = null;
     try {
         cm = uci.cursor("/etc/config.mesh");
     }
     catch (e) {
-        return out;
+        cm = null;
     }
-    if (!cm) {
-        return out;
-    }
-
-    const live_keys = [];
-    if (fs.access("/usr/bin/wg")) {
-        const w = fs.popen("/usr/bin/wg show all latest-handshakes 2>/dev/null");
-        if (w) {
-            const now = time();
-            for (let line = w.read("line"); length(line); line = w.read("line")) {
-                const v = split(trim(line), /\t/);
-                if (v && length(v) >= 3 && int(v[2]) + 300 > now) {
-                    push(live_keys, v[1]);
-                }
+    if (cm) {
+        sc_mtu_default = int(cm.get("wireguard", "@network[0]", "mtu") || 0);
+        cm.foreach("wireguard", "client", function (s) {
+            out.server_tunnels.total++;
+            const en = s.enabled === "1";
+            if (en) {
+                out.server_tunnels.active++;
             }
-            w.close();
-        }
-    }
-
-    function keyIsLive(key)
-    {
-        if (!key || key === "") {
-            return false;
-        }
-        for (let i = 0; i < length(live_keys); i++) {
-            if (index(key, live_keys[i]) >= 0) {
-                return true;
+            const peer = findPeerByKey(peers, s.key);
+            if (peer && peer.live) {
+                out.server_tunnels.live++;
             }
-        }
-        return false;
+            if (length(out.sc) >= cap) {
+                return;
+            }
+            push(out.sc, {
+                role: "server_tunnel",
+                name: s.name || s[".name"] || "",
+                enabled: en,
+                iface: peer ? peer.iface : "",
+                port: s.port || "",
+                contact: s.contact || "",
+                mtu: (peer && peer.mtu) ? peer.mtu : sc_mtu_default,
+                last_handshake: peer ? peer.last_handshake : 0,
+                live: peer ? peer.live : false,
+                rx_bytes: peer ? peer.rx_bytes : 0,
+                tx_bytes: peer ? peer.tx_bytes : 0,
+                rx_rate_bps: peer ? peer.rx_rate_bps : 0,
+                tx_rate_bps: peer ? peer.tx_rate_bps : 0,
+                endpoint: peer ? peer.endpoint : ""
+            });
+        });
+        cm.foreach("wireguard", "server", function (s) {
+            out.clients.total++;
+            const en = s.enabled === "1";
+            if (en) {
+                out.clients.active++;
+            }
+            const peer = findPeerByKey(peers, s.key);
+            if (peer && peer.live) {
+                out.clients.live++;
+            }
+            if (length(out.sc) >= cap) {
+                return;
+            }
+            push(out.sc, {
+                role: "client",
+                name: s.name || s[".name"] || "",
+                enabled: en,
+                iface: peer ? peer.iface : "",
+                port: s.port || "",
+                contact: s.contact || "",
+                mtu: (peer && peer.mtu) ? peer.mtu : sc_mtu_default,
+                last_handshake: peer ? peer.last_handshake : 0,
+                live: peer ? peer.live : false,
+                rx_bytes: peer ? peer.rx_bytes : 0,
+                tx_bytes: peer ? peer.tx_bytes : 0,
+                rx_rate_bps: peer ? peer.rx_rate_bps : 0,
+                tx_rate_bps: peer ? peer.tx_rate_bps : 0,
+                endpoint: peer ? peer.endpoint : ""
+            });
+        });
     }
 
-    cm.foreach("wireguard", "client", function (s) {
-        out.server_tunnels.total++;
-        if (s.enabled === "1") {
-            out.server_tunnels.active++;
-        }
-        if (keyIsLive(s.key)) {
-            out.server_tunnels.live++;
-        }
-    });
-    cm.foreach("wireguard", "server", function (s) {
-        out.clients.total++;
-        if (s.enabled === "1") {
-            out.clients.active++;
-        }
-        if (keyIsLive(s.key)) {
-            out.clients.live++;
-        }
-    });
+    let wm = null;
+    try {
+        wm = uci.cursor();
+    }
+    catch (e) {
+        wm = null;
+    }
+    if (wm && fs.access("/etc/config/wireguard_mobile")) {
+        const main_mtu_mode = wm.get("wireguard_mobile", "main", "mtu_mode") || "auto";
+        const main_mtu_fixed = int(wm.get("wireguard_mobile", "main", "mtu_fixed") || 1280);
+        wm.foreach("wireguard_mobile", "client", function (s) {
+            out.mobile.total++;
+            const en = s.enabled !== "0";
+            if (en) {
+                out.mobile.active++;
+            }
+            const peer = findPeerByKey(peers, s.public_key);
+            if (peer && peer.live) {
+                out.mobile.live++;
+            }
+            if (length(out.mobile_peers) >= cap) {
+                return;
+            }
+            const cs = uc(s.callsign || "");
+            const dn = s.device_name || "";
+            let name = "";
+            if (cs !== "" && dn !== "") {
+                name = `${cs}-${dn}`;
+            }
+            else if (cs !== "") {
+                name = cs;
+            }
+            else if (dn !== "") {
+                name = dn;
+            }
+            else {
+                name = s[".name"] || "";
+            }
+            const cid = s.client_id || "";
+            let ifn = peer ? peer.iface : "";
+            if ((!ifn || ifn === "") && cid !== "") {
+                ifn = `wgm${cid}`;
+            }
+            let mtu = 0;
+            const mode = s.mtu_mode || "default";
+            if (mode === "fixed") {
+                mtu = int(s.mtu_fixed || 0);
+            }
+            else if (int(s.last_mtu || 0) > 0) {
+                mtu = int(s.last_mtu);
+            }
+            else if (mode === "default" && main_mtu_mode === "fixed") {
+                mtu = main_mtu_fixed;
+            }
+            if (!mtu && peer && peer.mtu) {
+                mtu = peer.mtu;
+            }
+            if (!mtu && ifn) {
+                mtu = readIfaceMtu(ifn);
+            }
+            const established = (s.wg_established || s.wg_connected) === "1";
+            push(out.mobile_peers, {
+                name: name,
+                enabled: en,
+                iface: ifn,
+                address: s.address || "",
+                port: s.port || "",
+                notes: s.notes || "",
+                mtu: mtu,
+                established: established,
+                last_handshake: peer ? peer.last_handshake : 0,
+                live: peer ? peer.live : false,
+                rx_bytes: peer ? peer.rx_bytes : 0,
+                tx_bytes: peer ? peer.tx_bytes : 0,
+                rx_rate_bps: peer ? peer.rx_rate_bps : 0,
+                tx_rate_bps: peer ? peer.tx_rate_bps : 0,
+                endpoint: peer ? peer.endpoint : ""
+            });
+        });
+    }
     return out;
 }
 
@@ -804,7 +994,7 @@ export function collectSample(store, cfg)
     }
     store.live_neighbors = live_pub;
 
-    store.wg = readWgTunnelStats();
+    store.wg = readWgLive(store);
 
     const mean_lq = neighbor_count ? int(lq_sum / neighbor_count) : 0;
     const mean_cost = cost_n ? int(cost_sum / cost_n) : 0;
