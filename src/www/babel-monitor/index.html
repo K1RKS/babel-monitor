@@ -89,6 +89,10 @@
     margin: 0 0 10px;
   }
   .sec-head h2 { margin: 0; }
+  .sec-sub {
+    color: var(--muted);
+    font-size: 12px;
+  }
   .sec-filter {
     display: inline-flex;
     align-items: center;
@@ -623,6 +627,7 @@
   <section id="wgServerSection" hidden>
     <div class="sec-head">
       <h2>WireGuard Server</h2>
+      <span class="sec-sub">Inbound AREDN node tunnels</span>
       <label class="sec-filter" title="Hide disabled server tunnels">
         <input type="checkbox" id="wgServerEnabledOnly" checked>
         Enabled only
@@ -649,6 +654,7 @@
   <section id="wgClientSection" hidden>
     <div class="sec-head">
       <h2>WireGuard Client</h2>
+      <span class="sec-sub">Outbound AREDN client tunnels</span>
       <label class="sec-filter" title="Hide disabled client tunnels">
         <input type="checkbox" id="wgClientEnabledOnly" checked>
         Enabled only
@@ -675,6 +681,7 @@
   <section id="wgMobileSection" hidden>
     <div class="sec-head">
       <h2>WireGuard Mobile</h2>
+      <span class="sec-sub">Phone / desktop WG-Mobile peers</span>
       <label class="sec-filter" title="Hide disabled mobile clients">
         <input type="checkbox" id="wgMobileEnabledOnly" checked>
         Enabled only
@@ -2022,8 +2029,8 @@
         wgTip
       ]);
     }
-    pushWg("WG Server Tunnels", wg.server_tunnels);
-    pushWg("WG Server Clients", wg.clients);
+    pushWg("WG Server", wg.server_tunnels);
+    pushWg("WG Client", wg.clients);
     pushWg("WG Mobile", wg.mobile);
     $("kpis").innerHTML = items.map(function (it) {
       const klass = it[3] ? " " + it[3] : "";
@@ -2161,12 +2168,16 @@
   }
 
   function wgStatusRank(row) {
+    if (!row.enabled) return -1;
     if (row.live) return 2;
     if (Number(row.last_handshake) > 0) return 1;
     return 0;
   }
 
   function wgStatusHtml(row) {
+    if (!row.enabled) {
+      return '<span class="wg-status-never">—</span>';
+    }
     if (row.live) {
       return '<span class="wg-status-live">Live</span>';
     }

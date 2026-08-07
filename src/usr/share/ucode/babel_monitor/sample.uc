@@ -107,11 +107,28 @@ function findPeerByKey(peers, keyblob)
     return null;
 }
 
-/** Prefer UCI port; else iface listen_port; else endpoint :port. Never emit contact/notes. */
-function resolveWgPort(uci_port, peer, iface_ports)
+/** Prefer UCI port; else colon-suffix fields; else iface listen_port; else endpoint :port. */
+function portFromColonField(v)
+{
+    if (v == null || `${v}` === "") {
+        return "";
+    }
+    const m = match(`${v}`, /:([0-9]+)$/);
+    return m ? m[1] : "";
+}
+
+function resolveWgPort(uci_port, peer, iface_ports, extras)
 {
     if (uci_port != null && `${uci_port}` !== "") {
         return `${uci_port}`;
+    }
+    if (extras) {
+        for (let i = 0; i < length(extras); i++) {
+            const p = portFromColonField(extras[i]);
+            if (p !== "") {
+                return p;
+            }
+        }
     }
     if (peer) {
         if (peer.listen_port && `${peer.listen_port}` !== "" && `${peer.listen_port}` !== "0") {
@@ -126,6 +143,38 @@ function resolveWgPort(uci_port, peer, iface_ports)
                 return m[1];
             }
         }
+    }
+    return "";
+}
+
+/**
+ * Display name for mesh wireguard sections.
+ * New schema: option name. Legacy client-tunnels: host / node (no name).
+ */
+function scDisplayName(s)
+{
+    if (s.name != null && trim(`${s.name}`) !== "") {
+        return trim(`${s.name}`);
+    }
+    if (s.host != null && trim(`${s.host}`) !== "") {
+        return trim(`${s.host}`);
+    }
+    if (s.node != null && trim(`${s.node}`) !== "") {
+        const n = trim(`${s.node}`);
+        const m = match(n, /^(.+):[0-9]+$/);
+        return m ? m[1] : n;
+    }
+    return s[".name"] || "";
+}
+
+/** Key material: modern option key, or legacy passwd on client tunnels. */
+function scKeyBlob(s)
+{
+    if (s.key != null && `${s.key}` !== "") {
+        return s.key;
+    }
+    if (s.passwd != null && `${s.passwd}` !== "") {
+        return s.passwd;
     }
     return "";
 }
@@ -223,28 +272,32 @@ function readWgLive(store)
             if (en) {
                 out.server_tunnels.active++;
             }
-            const peer = findPeerByKey(peers, s.key);
+            const keyblob = scKeyBlob(s);
+            const peer = findPeerByKey(peers, keyblob);
             if (peer && peer.live) {
                 out.server_tunnels.live++;
             }
             if (length(out.server_peers) >= cap) {
                 return;
             }
+            const uci_port = (s.port != null && `${s.port}` !== "")
+                ? `${s.port}`
+                : portFromColonField(s.clientip);
             /* Guess iface wgc* from listen port when peer not yet heard */
             let ifn = peer ? peer.iface : "";
-            if ((!ifn || ifn === "") && s.port != null && `${s.port}` !== "") {
+            if ((!ifn || ifn === "") && uci_port !== "") {
                 for (let k in iface_ports) {
-                    if (iface_ports[k] === `${s.port}` && match(k, /^wgc/)) {
+                    if (iface_ports[k] === uci_port && match(k, /^wgc/)) {
                         ifn = k;
                         break;
                     }
                 }
             }
             push(out.server_peers, {
-                name: s.name || s[".name"] || "",
+                name: scDisplayName(s),
                 enabled: en,
                 iface: ifn,
-                port: resolveWgPort(s.port, peer, iface_ports),
+                port: resolveWgPort(uci_port, peer, iface_ports, [ s.clientip ]),
                 mtu: (peer && peer.mtu) ? peer.mtu : (ifn ? readIfaceMtu(ifn) : sc_mtu_default),
                 last_handshake: peer ? peer.last_handshake : 0,
                 live: peer ? peer.live : false,
@@ -261,7 +314,8 @@ function readWgLive(store)
             if (en) {
                 out.clients.active++;
             }
-            const peer = findPeerByKey(peers, s.key);
+            const keyblob = scKeyBlob(s);
+            const peer = findPeerByKey(peers, keyblob);
             if (peer && peer.live) {
                 out.clients.live++;
             }
@@ -269,11 +323,17 @@ function readWgLive(store)
                 return;
             }
             let ifn = peer ? peer.iface : "";
+            const uci_port = (s.port != null && `${s.port}` !== "")
+                ? `${s.port}`
+                : portFromColonField(s.netip || s.node);
+            if ((!ifn || ifn === "") && peer && peer.iface) {
+                ifn = peer.iface;
+            }
             push(out.client_peers, {
-                name: s.name || s[".name"] || "",
+                name: scDisplayName(s),
                 enabled: en,
                 iface: ifn,
-                port: resolveWgPort(s.port, peer, iface_ports),
+                port: resolveWgPort(uci_port, peer, iface_ports, [ s.netip, s.node ]),
                 mtu: (peer && peer.mtu) ? peer.mtu : (ifn ? readIfaceMtu(ifn) : sc_mtu_default),
                 last_handshake: peer ? peer.last_handshake : 0,
                 live: peer ? peer.live : false,
