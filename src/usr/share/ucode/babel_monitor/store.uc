@@ -79,7 +79,8 @@ export function createStore(sample_cap)
             server_tunnels: { live: 0, active: 0, total: 0 },
             clients: { live: 0, active: 0, total: 0 },
             mobile: { live: 0, active: 0, total: 0 },
-            sc: [],
+            server_peers: [],
+            client_peers: [],
             mobile_peers: []
         },
         identity: {

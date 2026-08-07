@@ -1,18 +1,20 @@
 # Plan: WireGuard live KPIs + detail tables (incl. WG-Mobile)
 
-**Status:** implemented in 0.1.70 · **Ring buffer:** unchanged · **Depends on:** existing `store.wg` KPIs; sibling package [`wireguard-mobile`](https://github.com/K1RKS/wireguard-mobile) (`wgm*` / UCI `wireguard_mobile`)
+**Status:** implemented in 0.1.71 · **Ring buffer:** unchanged · **Depends on:** existing `store.wg` KPIs; sibling package [`wireguard-mobile`](https://github.com/K1RKS/wireguard-mobile) (`wgm*` / UCI `wireguard_mobile`)
 
 ## Goal
 
 Extend babel-monitor’s optional WireGuard surface the same way AREDN status tiles work:
 
 1. **KPI strip** — add optional **WG Mobile** (`live/active/total`), same pattern as **WG Server Tunnels** / **WG Server Clients**.
-2. **Exactly two bottom live tables** (each only if that config exists on the node):
-   - **WireGuard** — original node↔node tunnels (servers + clients together) from `/etc/config.mesh/wireguard`
+2. **Three bottom live tables** (each only if that config exists on the node):
+   - **WireGuard Server** — server tunnels (`wgc*` / UCI `client`) from `/etc/config.mesh/wireguard`
+   - **WireGuard Client** — client tunnels (`wgs*` / UCI `server`) from `/etc/config.mesh/wireguard`
    - **WireGuard Mobile** — phone/desktop peers from `/etc/config/wireguard_mobile`
-3. Each table has its own **Enabled only** filter (default **on**, separate `localStorage` keys).
-4. Columns include name, last heard, lifetime RX/TX, **RX/TX rate**, **MTU**, **contact/notes**, and (WG-M only) **established** as a filled/unfilled icon.
-5. **Not in the sample ring** — live snapshot only (like `live_neighbors`).
+3. Each table has its own **Enabled only** filter (default **on**) and **sortable columns** (default **name** ascending).
+4. Columns include name, last heard, lifetime RX/TX, **RX/TX rate**, **MTU**, **port**, and (WG-M only) **established** icon + address.
+5. **No contact/notes** on the public page (PII).
+6. **Not in the sample ring** — live snapshot only (like `live_neighbors`).
 
 ## Background (sources of truth)
 

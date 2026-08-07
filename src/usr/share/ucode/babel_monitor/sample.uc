@@ -107,17 +107,42 @@ function findPeerByKey(peers, keyblob)
     return null;
 }
 
+/** Prefer UCI port; else iface listen_port; else endpoint :port. Never emit contact/notes. */
+function resolveWgPort(uci_port, peer, iface_ports)
+{
+    if (uci_port != null && `${uci_port}` !== "") {
+        return `${uci_port}`;
+    }
+    if (peer) {
+        if (peer.listen_port && `${peer.listen_port}` !== "" && `${peer.listen_port}` !== "0") {
+            return `${peer.listen_port}`;
+        }
+        if (peer.iface && iface_ports && iface_ports[peer.iface]) {
+            return `${iface_ports[peer.iface]}`;
+        }
+        if (peer.endpoint && peer.endpoint !== "") {
+            const m = match(peer.endpoint, /:([0-9]+)$/);
+            if (m) {
+                return m[1];
+            }
+        }
+    }
+    return "";
+}
+
 function readWgLive(store)
 {
     const out = {
         server_tunnels: { live: 0, active: 0, total: 0 },
         clients: { live: 0, active: 0, total: 0 },
         mobile: { live: 0, active: 0, total: 0 },
-        sc: [],
+        server_peers: [],
+        client_peers: [],
         mobile_peers: []
     };
     const now = time();
     const peers = [];
+    const iface_ports = {};
     const new_xfer = {};
     const prev_xfer = (store && store.last && store.last.wg_xfer) ? store.last.wg_xfer : {};
     const cap = common.WG_PEER_CAP;
@@ -127,11 +152,19 @@ function readWgLive(store)
         if (w) {
             for (let line = w.read("line"); length(line); line = w.read("line")) {
                 const v = split(trim(line), /\t/);
-                /* Peer lines: ifname pubkey psk endpoint allowed hs rx tx keepalive (9 fields) */
-                if (!v || length(v) < 9) {
+                if (!v || length(v) < 5) {
                     continue;
                 }
                 const ifn = v[0];
+                /* Interface line: ifname priv pub listen_port fwmark (5 fields) */
+                if (length(v) < 9) {
+                    const lp = v[3] || "";
+                    if (lp !== "" && lp !== "off" && lp !== "(none)") {
+                        iface_ports[ifn] = lp;
+                    }
+                    continue;
+                }
+                /* Peer lines: ifname pubkey psk endpoint allowed hs rx tx keepalive (9 fields) */
                 const pubkey = v[1];
                 if (!pubkey || pubkey === "(none)") {
                     continue;
@@ -152,10 +185,12 @@ function readWgLive(store)
                     tx_rate = int(max(0, tx - prev.tx) / dt);
                 }
                 new_xfer[pubkey] = { rx: rx, tx: tx, t: now };
+                const listen_port = iface_ports[ifn] || "";
                 push(peers, {
                     iface: ifn,
                     pubkey: pubkey,
                     endpoint: endpoint,
+                    listen_port: listen_port,
                     last_handshake: hs,
                     live: (hs > 0 && hs + 300 > now) ? true : false,
                     rx_bytes: rx,
@@ -192,17 +227,25 @@ function readWgLive(store)
             if (peer && peer.live) {
                 out.server_tunnels.live++;
             }
-            if (length(out.sc) >= cap) {
+            if (length(out.server_peers) >= cap) {
                 return;
             }
-            push(out.sc, {
-                role: "server_tunnel",
+            /* Guess iface wgc* from listen port when peer not yet heard */
+            let ifn = peer ? peer.iface : "";
+            if ((!ifn || ifn === "") && s.port != null && `${s.port}` !== "") {
+                for (let k in iface_ports) {
+                    if (iface_ports[k] === `${s.port}` && match(k, /^wgc/)) {
+                        ifn = k;
+                        break;
+                    }
+                }
+            }
+            push(out.server_peers, {
                 name: s.name || s[".name"] || "",
                 enabled: en,
-                iface: peer ? peer.iface : "",
-                port: s.port || "",
-                contact: s.contact || "",
-                mtu: (peer && peer.mtu) ? peer.mtu : sc_mtu_default,
+                iface: ifn,
+                port: resolveWgPort(s.port, peer, iface_ports),
+                mtu: (peer && peer.mtu) ? peer.mtu : (ifn ? readIfaceMtu(ifn) : sc_mtu_default),
                 last_handshake: peer ? peer.last_handshake : 0,
                 live: peer ? peer.live : false,
                 rx_bytes: peer ? peer.rx_bytes : 0,
@@ -222,17 +265,16 @@ function readWgLive(store)
             if (peer && peer.live) {
                 out.clients.live++;
             }
-            if (length(out.sc) >= cap) {
+            if (length(out.client_peers) >= cap) {
                 return;
             }
-            push(out.sc, {
-                role: "client",
+            let ifn = peer ? peer.iface : "";
+            push(out.client_peers, {
                 name: s.name || s[".name"] || "",
                 enabled: en,
-                iface: peer ? peer.iface : "",
-                port: s.port || "",
-                contact: s.contact || "",
-                mtu: (peer && peer.mtu) ? peer.mtu : sc_mtu_default,
+                iface: ifn,
+                port: resolveWgPort(s.port, peer, iface_ports),
+                mtu: (peer && peer.mtu) ? peer.mtu : (ifn ? readIfaceMtu(ifn) : sc_mtu_default),
                 last_handshake: peer ? peer.last_handshake : 0,
                 live: peer ? peer.live : false,
                 rx_bytes: peer ? peer.rx_bytes : 0,
@@ -310,8 +352,7 @@ function readWgLive(store)
                 enabled: en,
                 iface: ifn,
                 address: s.address || "",
-                port: s.port || "",
-                notes: s.notes || "",
+                port: resolveWgPort(s.port, peer, iface_ports),
                 mtu: mtu,
                 established: established,
                 last_handshake: peer ? peer.last_handshake : 0,
