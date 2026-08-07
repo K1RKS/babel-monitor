@@ -1,0 +1,6 @@
+dist/
+*.apk
+install_package_remotely.conf
+.DS_Store
+*.swp
+*~

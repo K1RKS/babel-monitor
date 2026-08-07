@@ -1,0 +1,4 @@
+# Copy to install_package_remotely.conf (gitignored) and edit.
+PACKAGE_PATH=dist/
+NODE=k1rks-x86-development.local.mesh
+# SSH_PASSWORD=

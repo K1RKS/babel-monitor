@@ -1,0 +1,655 @@
+#!/usr/bin/ucode
+/**
+ * babel-monitord — in-RAM metrics collector + control/data socket.
+ * No metric flash I/O. Does not touch Prometheus.
+ */
+import * as fs from "fs";
+import * as uloop from "uloop";
+import * as socket from "socket";
+import * as common from "babel_monitor.common";
+import * as storelib from "babel_monitor.store";
+import * as samplelib from "babel_monitor.sample";
+import * as configlib from "babel_monitor.config";
+
+fs.mkdir(common.RUN_DIR);
+let cfg = configlib.loadConfig();
+const store = storelib.createStore(common.ringSlots(cfg.ring_size));
+store.boot_id = common.bootIdNew();
+samplelib.refreshIdentity(store);
+
+let sample_timer = null;
+let peak_timer = null;
+
+function readDaemonRssKb()
+{
+    const raw = fs.readfile("/proc/self/status");
+    if (!raw) {
+        return null;
+    }
+    const m = match(raw, /VmRSS:\s+([0-9]+)/);
+    if (!m) {
+        return null;
+    }
+    return int(m[1]);
+}
+
+/** Extract OpenWrt logread service name from `facility.prio name[pid]: …`. */
+function syslogServiceName(line)
+{
+    const m = match(`${line}`, /\S+\.\S+\s+([^:]+):/);
+    if (!m) {
+        return "";
+    }
+    let tag = trim(m[1]);
+    const bare = match(tag, /^(.+)\[\d+\]$/);
+    if (bare) {
+        tag = bare[1];
+    }
+    return lc(tag);
+}
+
+/** True if line's service tag matches a syslog filter id. */
+function syslogFilterHit(service, f)
+{
+    if (!service || !f) {
+        return false;
+    }
+    if (f === "auth" || f === "dropbear") {
+        return service === "dropbear";
+    }
+    if (f === "babel_monitor") {
+        return service === "manager.babel_monitor.uc";
+    }
+    return service === f;
+}
+
+/** Last N syslog lines via logread (not stored in the sample ring).
+ * limit applies to the returned set. With filters: scan a fixed pre-filter
+ * window (500 lines — cheap), match on service tag, then keep the last limit hits.
+ */
+function readSyslogLines(limit, filters)
+{
+    const want = common.clampInt(limit, 1, 200, 50);
+    const pull = length(filters) ? 500 : want;
+    const raw = [];
+    const p = fs.popen(sprintf("logread -l %d 2>/dev/null", pull));
+    if (!p) {
+        return raw;
+    }
+    for (let line = p.read("line"); length(line); line = p.read("line")) {
+        push(raw, trim(line));
+    }
+    p.close();
+
+    if (!length(filters)) {
+        /* newest last — keep last want lines */
+        if (length(raw) <= want) {
+            return raw;
+        }
+        const out = [];
+        for (let i = length(raw) - want; i < length(raw); i++) {
+            push(out, raw[i]);
+        }
+        return out;
+    }
+
+    /* Filter first, then tail want (limit is post-filter). */
+    const matched = [];
+    for (let i = 0; i < length(raw); i++) {
+        const line = raw[i];
+        const service = syslogServiceName(line);
+        let hit = false;
+        for (let fi = 0; fi < length(filters); fi++) {
+            if (syslogFilterHit(service, filters[fi])) {
+                hit = true;
+                break;
+            }
+        }
+        if (hit) {
+            push(matched, line);
+        }
+    }
+    if (length(matched) <= want) {
+        return matched;
+    }
+    const trimmed = [];
+    for (let i = length(matched) - want; i < length(matched); i++) {
+        push(trimmed, matched[i]);
+    }
+    return trimmed;
+}
+
+function parseFilterList(raw)
+{
+    const filters = [];
+    if (raw == null || raw === "" || lc(raw) === "all") {
+        return filters;
+    }
+    const known = {
+        "babel-monitord": true,
+        "babeld_wrapper": true,
+        "babel_monitor": true,
+        "uhttpd": true,
+        "netifd": true,
+        "dropbear": true,
+        "auth": true,
+        "procd": true,
+        "update-time": true,
+        "dnsmasq": true,
+        "arednlink": true,
+        "lqm": true,
+        "kernel": true
+    };
+    const parts = split(raw, ",");
+    for (let i = 0; i < length(parts); i++) {
+        const f = lc(trim(parts[i]));
+        if (known[f]) {
+            push(filters, f === "auth" ? "dropbear" : f);
+        }
+    }
+    return filters;
+}
+
+function readDmesgLines(limit)
+{
+    const want = common.clampInt(limit, 1, 200, 80);
+    const raw = [];
+    const p = fs.popen("dmesg 2>/dev/null");
+    if (!p) {
+        return raw;
+    }
+    for (let line = p.read("line"); length(line); line = p.read("line")) {
+        push(raw, replace(`${line}`, /\r?\n$/, ""));
+    }
+    p.close();
+    if (length(raw) <= want) {
+        return raw;
+    }
+    const out = [];
+    for (let i = length(raw) - want; i < length(raw); i++) {
+        push(out, raw[i]);
+    }
+    return out;
+}
+
+function readLqmInfoLines()
+{
+    const lines = [];
+    const raw = fs.readfile("/tmp/lqm.info");
+    if (!raw || raw === "") {
+        push(lines, "(no /tmp/lqm.info)");
+        return lines;
+    }
+    /* Prefer pretty JSON when valid */
+    try {
+        const obj = json(raw);
+        push(lines, sprintf("%.J", obj));
+        return lines;
+    }
+    catch (e) {
+    }
+    return split(replace(`${raw}`, /\r$/, ""), "\n");
+}
+
+/** Path + mtime for Logs UI (LQM file / Babel control socket). */
+function fileSourceMeta(path)
+{
+    const meta = { path: path, mtime: null };
+    const st = fs.stat(path);
+    if (st && st.mtime != null) {
+        meta.mtime = int(st.mtime);
+    }
+    return meta;
+}
+
+function appendDumpSection(out, title, dump_lines, max_lines)
+{
+    push(out, "=== " + title + " ===");
+    if (!dump_lines) {
+        push(out, "(unavailable)");
+        push(out, "");
+        return;
+    }
+    let n = 0;
+    for (let i = 0; i < length(dump_lines); i++) {
+        const line = dump_lines[i];
+        if (line === "") {
+            continue;
+        }
+        if (max_lines && n >= max_lines) {
+            push(out, sprintf("… truncated after %d lines", max_lines));
+            break;
+        }
+        push(out, line);
+        n++;
+    }
+    push(out, "");
+}
+
+function readBabelDumpLines()
+{
+    const out = [];
+    appendDumpSection(out, "dump-neighbors", samplelib.babelDumpCmd("dump-neighbors"), 200);
+    appendDumpSection(out, "dump-routable-neighbors",
+        samplelib.babelDumpCmd("dump-routable-neighbors"), 200);
+    appendDumpSection(out, "dump-installed-routes",
+        samplelib.babelDumpCmd("dump-installed-routes"), 150);
+    return out;
+}
+
+/** One-shot process table via busybox top -bn1 (not stored in the ring). */
+function readTopLines()
+{
+    const lines = [];
+    const p = fs.popen("top -bn1 2>/dev/null");
+    if (!p) {
+        return lines;
+    }
+    for (let line = p.read("line"); length(line); line = p.read("line")) {
+        /* Keep leading spaces so columns stay aligned */
+        push(lines, replace(`${line}`, /\r?\n$/, ""));
+    }
+    p.close();
+    return lines;
+}
+
+function readMemAvailableKb()
+{
+    const raw = fs.readfile("/proc/meminfo");
+    if (!raw) {
+        return 0;
+    }
+    const m = match(raw, /MemAvailable:\s+([0-9]+)/);
+    if (!m) {
+        return 0;
+    }
+    return int(m[1]);
+}
+
+function ringOptionsPayload()
+{
+    const avail_kb = readMemAvailableKb();
+    const cur = common.normalizeRingSize(cfg.ring_size);
+    const cur_bytes = common.ringBufferBytes(cur);
+    /* Free after reclaiming the live buffer (for 50% safety check) */
+    const effective_bytes = (avail_kb * 1024) + cur_bytes;
+    const options = [];
+    for (let i = 0; i < length(common.RING_SIZE_IDS); i++) {
+        const id = common.RING_SIZE_IDS[i];
+        const bytes = common.ringBufferBytes(id);
+        const over = bytes > (effective_bytes / 2);
+        push(options, {
+            id: id,
+            label: id,
+            seconds: common.ringSeconds(id),
+            slots: common.ringSlots(id),
+            buffer_bytes: bytes,
+            selected: id === cur,
+            allowed: !over || id === cur
+        });
+    }
+    return {
+        ring_size: cur,
+        retention_s: cfg.sample_interval * store.sample_cap,
+        sample_cap: store.sample_cap,
+        sample_count: store.sample_count,
+        mem_available_kb: avail_kb,
+        buffer_bytes: cur_bytes,
+        effective_free_bytes: effective_bytes,
+        options: options
+    };
+}
+
+function metaObj()
+{
+    const oldest = storelib.peekOldest(store);
+    const newest = storelib.peekNewest(store);
+    return {
+        api_version: common.API_VERSION,
+        schema_version: common.SCHEMA_VERSION,
+        package_version: common.packageVersion(),
+        node_id: store.identity.node_id,
+        mac: store.identity.mac,
+        hostname: store.identity.hostname,
+        boot_id: store.boot_id,
+        sample_interval: cfg.sample_interval,
+        ring_size: common.normalizeRingSize(cfg.ring_size),
+        retention_s: cfg.sample_interval * store.sample_cap,
+        sample_count: store.sample_count,
+        sample_cap: store.sample_cap,
+        oldest_t: oldest ? oldest.t : null,
+        oldest_seq: oldest ? oldest.seq : 0,
+        newest_t: newest ? newest.t : null,
+        newest_seq: newest ? newest.seq : 0,
+        label_count: length(store.labels),
+        mem_total_kb: store.last.mem_total_kb,
+        mem_available_kb: readMemAvailableKb(),
+        compress_default: cfg.compress ? "on" : "off",
+        enabled: cfg.enabled ? "on" : "off",
+        sync_limit: cfg.sync_limit,
+        compress_min_bytes: cfg.compress_min_bytes,
+        rss_estimate_bytes: storelib.estimateBytes(store),
+        buffer_bytes: common.ringBufferBytes(cfg.ring_size),
+        daemon_rss_kb: readDaemonRssKb()
+    };
+}
+
+function handleRequest(line)
+{
+    line = trim(line);
+    if (!length(line)) {
+        return { error: "empty" };
+    }
+
+    const parts = split(line, " ");
+    const cmd = lc(parts[0]);
+    const args = {};
+    for (let i = 1; i < length(parts); i++) {
+        const kv = split(parts[i], "=", 2);
+        if (length(kv) === 2) {
+            args[kv[0]] = kv[1];
+        }
+    }
+
+    if (cmd === "meta" || cmd === "hello") {
+        samplelib.refreshIdentity(store);
+        return metaObj();
+    }
+    if (cmd === "live") {
+        return {
+            boot_id: store.boot_id,
+            node_id: store.identity.node_id,
+            neighbors: store.live_neighbors,
+            latest: storelib.latestSample(store),
+            wg: store.wg,
+            meta: metaObj()
+        };
+    }
+    if (cmd === "sync") {
+        const since = int(args.since_seq || 0);
+        const limit = common.clampInt(args.limit || cfg.sync_limit, 1, 2000, cfg.sync_limit);
+        const r = storelib.syncSamples(store, since, limit);
+        let next_seq = since;
+        if (length(r.samples)) {
+            next_seq = r.samples[length(r.samples) - 1].seq;
+        }
+        const hit_end = !length(r.samples) || next_seq >= r.newest_seq;
+        return {
+            boot_id: store.boot_id,
+            node_id: store.identity.node_id,
+            truncated: r.truncated,
+            gap_before: r.gap_before,
+            next_seq: next_seq,
+            next_t: length(r.samples) ? r.samples[length(r.samples) - 1].t : null,
+            complete: hit_end || length(r.samples) < limit,
+            samples: r.samples
+        };
+    }
+    if (cmd === "events") {
+        const since = int(args.since_seq || 0);
+        const limit = common.clampInt(args.limit || cfg.sync_limit, 1, 2000, cfg.sync_limit);
+        const r = storelib.syncEvents(store, since, limit);
+        return {
+            boot_id: store.boot_id,
+            truncated: r.truncated,
+            events: r.events,
+            next_seq: length(r.events) ? r.events[length(r.events) - 1].seq : since,
+            complete: true
+        };
+    }
+    if (cmd === "series") {
+        const sec = common.clampInt(args.seconds || common.SERIES_SLICE_S, 1, common.SERIES_SLICE_S, common.SERIES_SLICE_S);
+        const end_age = common.clampInt(args.end_age || 0, 0, common.SERIES_END_AGE_MAX, 0);
+        return {
+            boot_id: store.boot_id,
+            seconds: sec,
+            end_age: end_age,
+            samples: storelib.seriesWindow(store, sec, end_age)
+        };
+    }
+    if (cmd === "ring") {
+        samplelib.refreshIdentity(store);
+        return ringOptionsPayload();
+    }
+    if (cmd === "syslog") {
+        const limit = common.clampInt(args.limit || 50, 1, 200, 50);
+        const filters = parseFilterList(args.filters);
+        return {
+            boot_id: store.boot_id,
+            source: "syslog",
+            limit: limit,
+            filters: filters,
+            lines: readSyslogLines(limit, filters)
+        };
+    }
+    if (cmd === "logs") {
+        const source = lc(args.source || "syslog");
+        const limit = common.clampInt(args.limit || 50, 1, 200, 50);
+        if (source === "syslog") {
+            const filters = parseFilterList(args.filters);
+            return {
+                boot_id: store.boot_id,
+                source: "syslog",
+                limit: limit,
+                filters: filters,
+                lines: readSyslogLines(limit, filters)
+            };
+        }
+        if (source === "dumps") {
+            const src = fileSourceMeta("/var/run/babel.sock");
+            return {
+                boot_id: store.boot_id,
+                source: "dumps",
+                source_path: src.path,
+                source_mtime: src.mtime,
+                lines: readBabelDumpLines()
+            };
+        }
+        if (source === "lqm") {
+            const src = fileSourceMeta("/tmp/lqm.info");
+            return {
+                boot_id: store.boot_id,
+                source: "lqm",
+                source_path: src.path,
+                source_mtime: src.mtime,
+                lines: readLqmInfoLines()
+            };
+        }
+        if (source === "dmesg") {
+            return {
+                boot_id: store.boot_id,
+                source: "dmesg",
+                limit: limit,
+                lines: readDmesgLines(limit)
+            };
+        }
+        return { error: "unknown logs source", source: source };
+    }
+    if (cmd === "top") {
+        return {
+            boot_id: store.boot_id,
+            lines: readTopLines()
+        };
+    }
+    if (cmd === "get") {
+        return {
+            settings: {
+                enabled: cfg.enabled ? "on" : "off",
+                sample_interval: cfg.sample_interval,
+                compress: cfg.compress ? "on" : "off",
+                sync_limit: cfg.sync_limit,
+                compress_min_bytes: cfg.compress_min_bytes,
+                ring_size: common.normalizeRingSize(cfg.ring_size)
+            },
+            status: metaObj()
+        };
+    }
+    if (cmd === "set") {
+        let changed = false;
+        const prev_interval = cfg.sample_interval;
+        const prev_ring = common.normalizeRingSize(cfg.ring_size);
+        for (let k in args) {
+            if (configlib.applySetting(cfg, k, args[k])) {
+                changed = true;
+            }
+        }
+        if (!changed) {
+            return { ok: false, error: "no valid settings" };
+        }
+        const new_ring = common.normalizeRingSize(cfg.ring_size);
+        if (new_ring !== prev_ring) {
+            const avail_kb = readMemAvailableKb();
+            const cur_bytes = common.ringBufferBytes(prev_ring);
+            const effective_bytes = (avail_kb * 1024) + cur_bytes;
+            const need = common.ringBufferBytes(new_ring);
+            if (need > (effective_bytes / 2)) {
+                cfg.ring_size = prev_ring;
+                return {
+                    ok: false,
+                    error: "ring_size would use more than 50% of effective free RAM",
+                    ring: ringOptionsPayload()
+                };
+            }
+            storelib.resizeSampleRing(store, common.ringSlots(new_ring));
+            gc();
+        }
+        configlib.saveConfig(cfg);
+        if (sample_timer && cfg.sample_interval !== prev_interval) {
+            sample_timer.set(cfg.sample_interval * 1000);
+        }
+        return {
+            ok: true,
+            settings: {
+                enabled: cfg.enabled ? "on" : "off",
+                sample_interval: cfg.sample_interval,
+                compress: cfg.compress ? "on" : "off",
+                sync_limit: cfg.sync_limit,
+                compress_min_bytes: cfg.compress_min_bytes,
+                ring_size: common.normalizeRingSize(cfg.ring_size)
+            },
+            ring: ringOptionsPayload()
+        };
+    }
+    return { error: sprintf("unknown cmd: %s", cmd) };
+}
+
+function serveClient(client)
+{
+    let buf = "";
+    let h = null;
+    h = uloop.handle(client, (events) => {
+        if (!(events & uloop.ULOOP_READ)) {
+            return;
+        }
+        const data = client.recv(8192);
+        if (!data || length(data) === 0) {
+            if (h) {
+                try {
+                    h.delete();
+                }
+                catch (e) {
+                }
+                h = null;
+            }
+            client.close();
+            return;
+        }
+        buf += data;
+        while (true) {
+            const n = index(buf, "\n");
+            if (n < 0) {
+                break;
+            }
+            const line = substr(buf, 0, n);
+            buf = substr(buf, n + 1);
+            if (trim(line) === "quit") {
+                if (h) {
+                    try {
+                        h.delete();
+                    }
+                    catch (e) {
+                    }
+                    h = null;
+                }
+                client.close();
+                return;
+            }
+            const resp = handleRequest(line);
+            client.send(sprintf("%J\n", resp));
+            /* Series/sync expand many temps — reclaim after reply */
+            gc();
+        }
+    }, uloop.ULOOP_READ);
+}
+
+function doSample()
+{
+    samplelib.collectSample(store, cfg);
+    /* Sample path allocates boxed ints + babel/LQM temps each tick */
+    gc();
+    if (sample_timer) {
+        sample_timer.set(cfg.sample_interval * 1000);
+    }
+    else {
+        sample_timer = uloop.timer(cfg.sample_interval * 1000, doSample);
+    }
+}
+
+function doCpuPeak()
+{
+    samplelib.updateCpuPeak(store);
+    if (peak_timer) {
+        peak_timer.set(1000);
+    }
+}
+
+function main()
+{
+    fs.unlink(common.SOCK_PATH);
+    const listener = socket.create(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_NONBLOCK, 0);
+    if (!listener) {
+        print("babel-monitord: socket.create failed: ", socket.error(), "\n");
+        return 1;
+    }
+    if (!listener.bind({ family: socket.AF_UNIX, path: common.SOCK_PATH })) {
+        print("babel-monitord: bind failed: ", socket.error(), "\n");
+        return 1;
+    }
+    if (!listener.listen(16)) {
+        print("babel-monitord: listen failed: ", socket.error(), "\n");
+        return 1;
+    }
+    try {
+        fs.chmod(common.SOCK_PATH, 0600);
+    }
+    catch (e) {
+    }
+
+    uloop.init();
+
+    /* Secondary mark-and-sweep GC (refcount alone cannot reclaim cycles/temps).
+     * Interval = object allocations between automatic sweeps. */
+    gc("start", 500);
+
+    uloop.handle(listener, (events) => {
+        if (!(events & uloop.ULOOP_READ)) {
+            return;
+        }
+        const client = listener.accept();
+        if (client) {
+            serveClient(client);
+        }
+    }, uloop.ULOOP_READ);
+
+    print(sprintf("babel-monitord %s boot_id=%s interval=%d\n",
+        common.packageVersion(), store.boot_id, cfg.sample_interval));
+
+    /* First sample after uloop is running so the control socket stays responsive */
+    sample_timer = uloop.timer(0, doSample);
+    peak_timer = uloop.timer(1000, doCpuPeak);
+
+    uloop.run();
+    return 0;
+}
+
+exit(main());

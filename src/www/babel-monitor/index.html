@@ -1,0 +1,2615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>babel-monitor</title>
+<style>
+  :root {
+    --bg: #1a1d23;
+    --panel: #23282f;
+    --fg: #e6e8eb;
+    --muted: #9aa3ad;
+    --line: #3a424d;
+    --accent: #5b9fd4;
+    --ok: #6fbf73;
+    --warn: #d4a84b;
+    --bad: #d97b7b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.45 ui-sans-serif, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    align-items: center;
+  }
+  header h1 { margin: 0; font-size: 1.15rem; font-weight: 600; }
+  header .setup-btn {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--fg);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  header .setup-btn:hover { border-color: var(--accent); color: var(--accent); }
+  header .meta { color: var(--muted); font-size: 12px; flex: 1 1 auto; }
+  main { padding: 14px 18px 28px; max-width: 1100px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+  .kpi {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 10px 12px;
+    min-width: 110px;
+    cursor: help;
+  }
+  .kpi .v { font-size: 1.25rem; font-weight: 600; }
+  .kpi .l { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .kpi.ok { border-color: var(--ok); }
+  .kpi.ok .v { color: var(--ok); }
+  .kpi.warn { border-color: var(--warn); }
+  .kpi.warn .v { color: var(--warn); }
+  .kpi.bad { border-color: var(--bad); }
+  .kpi.bad .v { color: var(--bad); }
+  table tr.stuck td { color: var(--bad); }
+  table tr.stuck td:first-child::after {
+    content: " stuck";
+    font-size: 11px;
+    color: var(--bad);
+    font-weight: 600;
+  }
+  .events-box {
+    margin: 0;
+    padding: 10px 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    max-height: 180px;
+    overflow: auto;
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .events-empty { color: var(--muted); }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 14px;
+  }
+  section h2 { margin: 0 0 10px; font-size: 0.95rem; }
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .tabs[hidden],
+  .chart-wrap[hidden],
+  .syslog-wrap[hidden],
+  #logSourceTabs[hidden],
+  #logControls[hidden],
+  #histToolbar[hidden],
+  #syslogFilters[hidden],
+  #logSourceMeta[hidden] {
+    display: none !important;
+  }
+  .tabs.metric { margin-bottom: 10px; }
+  .hist-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin-top: 10px;
+  }
+  .hist-toolbar[hidden] {
+    display: none !important;
+  }
+  .tabs.time { margin-top: 0; }
+  .tabs.hist-ctl {
+    margin-top: 0;
+    margin-left: auto;
+  }
+  .tabs.log-source { margin-bottom: 10px; }
+  .chart-row {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .chart-main { flex: 1; min-width: 0; position: relative; }
+  .hist-nav {
+    flex-shrink: 0;
+    align-self: center;
+    width: 28px;
+    height: 36px;
+    padding: 0;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .hist-nav:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
+  .hist-nav:disabled { opacity: 0.35; cursor: default; }
+  .overview-bar {
+    display: block;
+    width: 100%;
+    height: 28px;
+    margin-top: 8px;
+    border-radius: 4px;
+    background: #1a1d23;
+    border: 1px solid var(--line);
+    cursor: pointer;
+    touch-action: none;
+  }
+  .chart-wrap[hidden] .overview-bar {
+    display: none !important;
+  }
+  .tabs.log-ctl {
+    margin-top: 10px;
+    align-items: center;
+  }
+  .tabs.log-filters { margin: 0; }
+  #logSourceMeta {
+    color: var(--muted);
+    font-size: 12px;
+    margin-left: 4px;
+    cursor: help;
+    user-select: text;
+  }
+  #logSourceMeta[hidden] {
+    display: none !important;
+  }
+  .tabs button {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  .tabs button.active { color: var(--fg); border-color: var(--accent); }
+  #syslogPauseBtn.active {
+    color: #fff;
+    background: var(--bad);
+    border-color: var(--bad);
+  }
+  .chart-wrap { position: relative; }
+  .syslog-wrap { margin-top: 0; }
+  .syslog-box {
+    height: 280px;
+    overflow: auto;
+    margin: 0;
+    padding: 10px 12px;
+    background: #1a1d23;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--fg);
+    white-space: pre;
+  }
+  .syslog-empty { color: var(--muted); }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    margin: 0 0 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .legend.legend-below { margin: 8px 0 0; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i {
+    display: inline-block;
+    width: 12px;
+    height: 3px;
+    border-radius: 1px;
+  }
+  .legend i.bar {
+    width: 8px;
+    height: 10px;
+    border-radius: 1px;
+  }
+  canvas { width: 100%; height: 210px; display: block; background: #15181c; border-radius: 4px; cursor: crosshair; }
+  canvas.cost-stack { height: 340px; }
+  .chart-tip {
+    position: absolute;
+    z-index: 2;
+    pointer-events: none;
+    display: none;
+    min-width: 140px;
+    max-width: 280px;
+    padding: 8px 10px;
+    background: rgba(20, 23, 28, 0.94);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    font-size: 12px;
+    color: var(--fg);
+    line-height: 1.35;
+  }
+  .chart-tip .t { color: var(--muted); margin-bottom: 6px; font-size: 11px; }
+  .chart-tip .tip-row {
+    display: flex;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 2px 0;
+  }
+  .chart-tip .tip-row .n {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chart-tip .tip-row .n i {
+    flex: 0 0 auto;
+    width: 10px;
+    height: 3px;
+    border-radius: 1px;
+  }
+  .chart-tip .tip-row .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; }
+  .err { color: var(--bad); padding: 12px 18px; }
+  .tabs button:disabled,
+  .tabs button.tab-disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  .modal-back {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  .modal-back[hidden] { display: none; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    max-width: 520px;
+    width: 100%;
+    max-height: 90vh;
+    overflow: auto;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  }
+  .modal header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .modal header h3 { margin: 0; font-size: 15px; font-weight: 600; }
+  .modal .body { padding: 12px 14px 16px; }
+  .modal .note { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+  .modal table { width: 100%; }
+  .modal tr.sel td { background: rgba(91,159,212,0.12); }
+  .modal tr.dis td { opacity: 0.4; }
+  .modal button.pick {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--fg);
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .modal button.pick:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+  }
+  .modal .close-btn {
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    font-size: 18px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .modal .login-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+  }
+  .modal .login-row input {
+    flex: 1 1 160px;
+    background: #15181c;
+    border: 1px solid var(--line);
+    color: var(--fg);
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+  .modal .login-err { color: var(--bad); font-size: 12px; min-height: 1.2em; margin-top: 6px; }
+  .modal .footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+  .modal .footer .pick.primary {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>babel-monitor</h1>
+  <button type="button" class="setup-btn" id="setupBtn" title="Sample ring setup (admin)">Setup</button>
+  <div class="meta" id="identity">connecting…</div>
+</header>
+<div class="err" id="err" hidden></div>
+<main>
+  <div class="row" id="kpis"></div>
+  <section>
+    <h2>History</h2>
+    <div class="tabs metric" id="metricTabs" role="tablist" aria-label="Metric">
+      <button type="button" data-metric="lq" class="active">LQ</button>
+      <button type="button" data-metric="cost">Cost</button>
+      <button type="button" data-metric="neighbors">Neighbors</button>
+      <button type="button" data-metric="routes">Routes</button>
+      <button type="button" data-metric="links">Packets</button>
+      <button type="button" data-metric="linkio">Link I/O</button>
+      <button type="button" data-metric="hosts">Hosts</button>
+      <button type="button" data-metric="cpu">CPU</button>
+      <button type="button" data-metric="ram">RAM</button>
+      <button type="button" data-metric="selfrss">Self RSS</button>
+      <button type="button" data-metric="rf">RF</button>
+      <button type="button" data-metric="logs">Logs</button>
+      <button type="button" data-metric="top">Top</button>
+    </div>
+    <div class="tabs log-source" id="logSourceTabs" role="tablist" aria-label="Log source" hidden>
+      <button type="button" data-source="syslog" class="active">Syslog</button>
+      <button type="button" data-source="dumps">Dumps</button>
+      <button type="button" data-source="lqm">LQM</button>
+      <button type="button" data-source="dmesg">dmesg</button>
+    </div>
+    <div class="chart-wrap" id="chartWrap">
+      <div class="legend" id="legend"></div>
+      <div class="chart-row">
+        <button type="button" class="hist-nav" id="histOlderBtn" title="Scroll older" aria-label="Scroll older">‹</button>
+        <div class="chart-main">
+          <canvas id="chart" width="1000" height="210"></canvas>
+          <div class="legend legend-below" id="legendBottom" hidden></div>
+          <div class="chart-tip" id="chartTip" hidden></div>
+        </div>
+        <button type="button" class="hist-nav" id="histNewerBtn" title="Scroll newer" aria-label="Scroll newer">›</button>
+      </div>
+      <canvas class="overview-bar" id="overview" width="1000" height="28" aria-label="History overview"></canvas>
+    </div>
+    <div class="syslog-wrap" id="textWrap" hidden>
+      <pre class="syslog-box" id="textBox"><span class="syslog-empty">Loading…</span></pre>
+    </div>
+    <div class="hist-toolbar" id="histToolbar">
+      <div class="tabs time" id="timeTabs" role="tablist" aria-label="Time range">
+        <button type="button" data-sec="300">5m</button>
+        <button type="button" data-sec="1800">30m</button>
+        <button type="button" data-sec="3600">1h</button>
+        <button type="button" data-sec="14400">4h</button>
+        <button type="button" data-sec="86400">24h</button>
+      </div>
+      <div class="tabs hist-ctl" id="histControls" role="group" aria-label="History pan zoom">
+        <button type="button" id="histZoomOutBtn" title="Zoom out">Zoom−</button>
+        <button type="button" id="histZoomInBtn" title="Zoom in">Zoom+</button>
+        <button type="button" id="histOldestBtn" title="Jump to oldest samples">Oldest</button>
+        <button type="button" id="histLiveBtn" title="Jump to live edge" class="active">Live</button>
+      </div>
+    </div>
+    <div class="tabs log-ctl" id="logControls" hidden>
+      <div class="tabs log-filters" id="syslogFilters" role="group" aria-label="Syslog filters">
+        <button type="button" data-filter="all" class="active">All</button>
+        <button type="button" data-filter="babel-monitord">babel-monitord</button>
+        <button type="button" data-filter="babeld_wrapper">babeld_wrapper</button>
+        <button type="button" data-filter="babel_monitor">babel_monitor</button>
+        <button type="button" data-filter="uhttpd">uhttpd</button>
+        <button type="button" data-filter="netifd">netifd</button>
+        <button type="button" data-filter="dropbear" title="dropbear (Auth)">Auth</button>
+        <button type="button" data-filter="procd">procd</button>
+        <button type="button" data-filter="update-time">update-time</button>
+        <button type="button" data-filter="dnsmasq">dnsmasq</button>
+        <button type="button" data-filter="arednlink">arednlink</button>
+      </div>
+      <button type="button" id="syslogPauseBtn">Pause</button>
+      <button type="button" id="logDownloadBtn" title="Download full source (no filters / no tail)">Download</button>
+      <span id="logSourceMeta" hidden></span>
+    </div>
+  </section>
+  <section>
+    <h2>Neighbors (live)</h2>
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr><th>Host</th><th>IPv6</th><th>Type</th><th>LQ</th><th>Cost</th><th>RxCost</th><th>TxCost</th><th>RX Δ</th><th>TX Δ</th></tr>
+        </thead>
+        <tbody id="neigh"></tbody>
+      </table>
+    </div>
+  </section>
+  <section>
+    <h2>Routing events</h2>
+    <pre class="events-box" id="eventsBox"><span class="events-empty">Loading…</span></pre>
+  </section>
+</main>
+<div class="modal-back" id="ringModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ringModalTitle">
+    <header>
+      <h3 id="ringModalTitle">Sample ring size</h3>
+      <button type="button" class="close-btn" id="ringModalClose" aria-label="Close">×</button>
+    </header>
+    <div class="body">
+      <p class="note" id="ringModalNote"></p>
+      <table>
+        <thead>
+          <tr><th></th><th>Buffer</th><th>Est. RAM</th><th></th></tr>
+        </thead>
+        <tbody id="ringModalBody"></tbody>
+      </table>
+      <div class="footer" id="ringModalFooter" hidden>
+        <button type="button" class="pick" id="ringCancelBtn">Cancel</button>
+        <button type="button" class="pick primary" id="ringConfirmBtn" disabled>Confirm</button>
+      </div>
+      <div class="login-err" id="ringModalError"></div>
+    </div>
+  </div>
+</div>
+<div class="modal-back" id="loginModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle">
+    <header>
+      <h3 id="loginModalTitle">Admin login</h3>
+      <button type="button" class="close-btn" id="loginModalClose" aria-label="Close">×</button>
+    </header>
+    <div class="body">
+      <p class="note">Enter the node admin password to change babel-monitor setup.</p>
+      <div class="login-row">
+        <input type="password" id="loginPassword" autocomplete="current-password" placeholder="Password" />
+        <button type="button" class="pick" id="loginSubmitBtn">Login</button>
+      </div>
+      <div class="login-err" id="loginError"></div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  const API = "/cgi-bin/babel-monitor";
+  const PALETTE = ["#5b9fd4", "#e0a458", "#6fbf73", "#d97b7b", "#b39ddb"];
+  /* Babel unreachable sentinel — excluded from Cost left-axis scale */
+  const COST_UNREACH = 65535;
+  const COST_SOFT_CAP = 50000;
+  /* Nice Y maxima for Cost top panel (integers only) */
+  const COST_Y_CAPS = [10, 100, 1000, 10000, 25000, 50000];
+
+  const METRICS = {
+    lq: {
+      label: "LQ",
+      series: [
+        { key: "mean_lq", label: "mean LQ %", color: PALETTE[0] },
+        { key: "min_lq", label: "min LQ %", color: PALETTE[1] }
+      ],
+      minY: 0,
+      maxY: 100
+    },
+    cost: {
+      label: "Cost",
+      series: [],
+      minY: 0,
+      dynamic: "costs"
+    },
+    neighbors: {
+      label: "Neighbors",
+      series: [
+        /* Drawn first (underneath): markers so it stays visible when values match */
+        { key: "neighbor_count", label: "neighbors", color: PALETTE[0], markers: true },
+        { key: "routable_count", label: "routable", color: PALETTE[2] }
+      ],
+      minY: 0
+    },
+    routes: {
+      label: "Routes",
+      series: [
+        { key: "route_count_20", label: "/20", color: PALETTE[0] },
+        { key: "route_count_21", label: "/21", color: PALETTE[1] },
+        { key: "route_count_22", label: "/22", color: PALETTE[2] }
+      ],
+      minY: 0
+    },
+    links: {
+      label: "Packets",
+      series: [
+        { key: "tx_packets_delta", label: "TX Δ", color: PALETTE[0] },
+        { key: "rx_packets_delta", label: "RX Δ", color: PALETTE[2] },
+        { key: "tx_retries_delta", label: "retry Δ", color: PALETTE[1] },
+        { key: "tx_fail_delta", label: "fail Δ", color: PALETTE[3] }
+      ],
+      minY: 0
+    },
+    linkio: {
+      label: "Link I/O",
+      series: [],
+      minY: 0,
+      dynamic: "links"
+    },
+    hosts: {
+      label: "Hosts",
+      series: [
+        { key: "host_count", label: "hosts", color: PALETTE[0] },
+        { key: "host_change_delta", label: "change Δ", color: PALETTE[1] }
+      ],
+      minY: 0
+    },
+    cpu: {
+      label: "CPU",
+      series: [
+        { key: "cpu_pct", label: "CPU %", color: PALETTE[0] },
+        { key: "cpu_peak_pct", label: "peak %", color: PALETTE[3] }
+      ],
+      minY: 0,
+      maxY: 100
+    },
+    ram: {
+      label: "RAM",
+      series: [
+        { key: "mem_used_pct", label: "used %", color: PALETTE[0] }
+      ],
+      minY: 0,
+      maxY: 100
+    },
+    selfrss: {
+      label: "Self RSS",
+      series: [
+        { key: "daemon_rss_kb", label: "Self RSS KB", color: PALETTE[0] }
+      ],
+      minY: 0
+    },
+    rf: {
+      label: "RF",
+      /* series filled dynamically: AVG + each unique RF neighbor SNR */
+      series: [],
+      minY: 0,
+      dynamic: "rf"
+    }
+  };
+
+  let windowSec = 0; /* set from retention / browser zoom memory after meta */
+  let viewEndAgeSec = 0; /* 0 = live (docked to now); >0 = panned back */
+  let metricId = "lq";
+  let retentionSec = 14400; /* from meta.retention_s */
+  let ringSize = "4h";
+  let ringInfo = null;
+  let isAdmin = false;
+  let pendingRingSize = null; /* staged choice in Setup modal */
+  let series = [];
+  let hoverIdx = -1;
+  let chartLayout = null; /* { padL, padR, padT, padB, plotW, plotH, t0, windowSec, n } */
+  let memTotalKb = null;
+  let tickBusy = false;
+  let failStreak = 0;
+  let syslogPaused = false;
+  let textBusy = false;
+  let logSource = "syslog"; /* syslog | dumps | lqm | dmesg */
+  let overviewDrag = null; /* { startX, startAge, width, moved } */
+  let histZoomInited = false;
+  const ZOOM_STEPS = [
+    60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400
+  ]; /* 1m 2m 5m 10m 15m 30m 1h 2h 4h 6h 12h 24h — minute-aligned, integer tick counts */
+  const ZOOM_LS_KEY = "babel-monitor-window-sec";
+  let logFilterAll = true;
+  const logFilterOn = {
+    "babel-monitord": false,
+    "babeld_wrapper": false,
+    "babel_monitor": false,
+    "uhttpd": false,
+    "netifd": false,
+    "dropbear": false,
+    "procd": false,
+    "update-time": false,
+    "dnsmasq": false,
+    "arednlink": false
+  };
+
+  function $(id) { return document.getElementById(id); }
+
+  function isLogs() { return metricId === "logs"; }
+  function isTop() { return metricId === "top"; }
+  function isTextPanel() { return isLogs() || isTop(); }
+  function isRingHistory() {
+    return !isLogs() && !isTop();
+  }
+  function skipsSeriesChart() {
+    return isLogs() || isTop() || retentionSec <= 0;
+  }
+
+  function syncSyslogPauseBtn() {
+    const b = $("syslogPauseBtn");
+    if (!b) return;
+    b.textContent = "Pause";
+    b.classList.toggle("active", syslogPaused);
+    b.setAttribute("aria-pressed", syslogPaused ? "true" : "false");
+  }
+
+  function syncLogFilterButtons() {
+    const root = $("syslogFilters");
+    if (!root) return;
+    [].forEach.call(root.querySelectorAll("button[data-filter]"), function (b) {
+      const f = b.getAttribute("data-filter");
+      if (f === "all") b.classList.toggle("active", logFilterAll);
+      else b.classList.toggle("active", !logFilterAll && !!logFilterOn[f]);
+    });
+  }
+
+  function selectedLogFilters() {
+    if (logFilterAll) return [];
+    const out = [];
+    for (const k in logFilterOn) {
+      if (logFilterOn[k]) out.push(k);
+    }
+    return out;
+  }
+
+  function ensureLogFilterFallback() {
+    if (logFilterAll) return;
+    let any = false;
+    for (const k in logFilterOn) {
+      if (logFilterOn[k]) { any = true; break; }
+    }
+    if (!any) {
+      logFilterAll = true;
+      for (const k in logFilterOn) logFilterOn[k] = false;
+    }
+  }
+
+  function updateHistoryMode() {
+    const text = isTextPanel();
+    const logs = isLogs();
+    const noRing = retentionSec <= 0;
+    const showHistNav = !text && !noRing && isRingHistory();
+    $("chartWrap").hidden = text || (noRing && isRingHistory());
+    $("textWrap").hidden = !text;
+    $("histToolbar").hidden = text || noRing;
+    $("logSourceTabs").hidden = !logs;
+    $("logControls").hidden = !logs;
+    $("syslogFilters").hidden = !(logs && logSource === "syslog");
+    $("syslogPauseBtn").hidden = !(logs && logSource === "syslog");
+    if (!(logs && (logSource === "lqm" || logSource === "dumps"))) {
+      const meta = $("logSourceMeta");
+      if (meta) {
+        meta.hidden = true;
+        meta.textContent = "";
+        meta.removeAttribute("title");
+      }
+    }
+    if (text) hideTip();
+    if (logs && logSource === "syslog") {
+      syncSyslogPauseBtn();
+      syncLogFilterButtons();
+    }
+    syncMetricTabEnable();
+    syncTimeTabEnable();
+    syncHistControls();
+  }
+
+  function maxViewEndAge() {
+    return Math.max(0, retentionSec - windowSec);
+  }
+
+  function isLiveView() {
+    return viewEndAgeSec < 1;
+  }
+
+  function clampViewEndAge(age) {
+    return Math.max(0, Math.min(maxViewEndAge(), Math.round(age)));
+  }
+
+  function allowedZoomSteps() {
+    return ZOOM_STEPS.filter(function (s) { return s <= retentionSec; });
+  }
+
+  function nearestZoomIndex(span) {
+    const steps = allowedZoomSteps();
+    if (!steps.length) return 0;
+    let best = 0;
+    let bestDist = Math.abs(steps[0] - span);
+    for (let i = 1; i < steps.length; i++) {
+      const d = Math.abs(steps[i] - span);
+      if (d < bestDist) {
+        best = i;
+        bestDist = d;
+      }
+    }
+    return best;
+  }
+
+  function endAgeAfterSpanChange(oldSpan, newSpan, endAge) {
+    if (endAge < 1) return 0;
+    const center = endAge + oldSpan / 2;
+    const maxEnd = Math.max(0, retentionSec - newSpan);
+    return Math.max(0, Math.min(maxEnd, center - newSpan / 2));
+  }
+
+  function loadSavedZoom() {
+    try {
+      const v = parseInt(localStorage.getItem(ZOOM_LS_KEY), 10);
+      return v > 0 ? v : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function persistWindowSec() {
+    if (!(windowSec > 0)) return;
+    try {
+      localStorage.setItem(ZOOM_LS_KEY, String(windowSec));
+    } catch (e) { /* ignore quota / private mode */ }
+  }
+
+  /** Pick initial / restored zoom: browser memory if valid, else full ring. */
+  function resolveWindowSecForRetention() {
+    if (retentionSec <= 0) return 0;
+    const saved = loadSavedZoom();
+    let want = saved != null ? Math.min(saved, retentionSec) : retentionSec;
+    const steps = allowedZoomSteps();
+    if (steps.length) {
+      /* Prefer exact retention when that is the default/saved target */
+      if (want >= retentionSec) return retentionSec;
+      want = steps[nearestZoomIndex(want)];
+      if (want > retentionSec) want = retentionSec;
+    }
+    return want;
+  }
+
+  function initOrClampWindowSec() {
+    if (retentionSec <= 0) {
+      windowSec = 0;
+      return;
+    }
+    if (!histZoomInited || !(windowSec > 0)) {
+      windowSec = resolveWindowSecForRetention();
+      histZoomInited = true;
+    } else if (windowSec > retentionSec) {
+      windowSec = retentionSec;
+    }
+    viewEndAgeSec = clampViewEndAge(viewEndAgeSec);
+    persistWindowSec();
+  }
+
+  function applyShortcut(sec) {
+    windowSec = Math.min(sec, retentionSec || sec);
+    viewEndAgeSec = 0;
+    persistWindowSec();
+    syncTimeTabEnable();
+    syncHistControls();
+  }
+
+  function applyZoomStep(delta) {
+    const steps = allowedZoomSteps();
+    if (!steps.length) return;
+    const idx = nearestZoomIndex(windowSec);
+    const next = idx + delta;
+    if (next < 0 || next >= steps.length) return;
+    const newSpan = steps[next];
+    viewEndAgeSec = clampViewEndAge(endAgeAfterSpanChange(windowSec, newSpan, viewEndAgeSec));
+    windowSec = newSpan;
+    persistWindowSec();
+    syncTimeTabEnable();
+    syncHistControls();
+  }
+
+  function goOldest() {
+    viewEndAgeSec = maxViewEndAge();
+    syncHistControls();
+  }
+
+  function goLive() {
+    viewEndAgeSec = 0;
+    syncHistControls();
+  }
+
+  function nudgeHistory(dir) {
+    /* dir > 0 = older */
+    const step = Math.max(10, Math.round(windowSec / 10));
+    viewEndAgeSec = clampViewEndAge(viewEndAgeSec + dir * step);
+    syncHistControls();
+  }
+
+  function syncHistControls() {
+    const live = isLiveView();
+    const atOldest = viewEndAgeSec >= maxViewEndAge() - 0.5;
+    const steps = allowedZoomSteps();
+    const zIdx = nearestZoomIndex(windowSec);
+    const zin = $("histZoomInBtn");
+    const zout = $("histZoomOutBtn");
+    const oldest = $("histOldestBtn");
+    const liveBtn = $("histLiveBtn");
+    const older = $("histOlderBtn");
+    const newer = $("histNewerBtn");
+    if (zin) zin.disabled = zIdx <= 0 || retentionSec <= 0;
+    if (zout) zout.disabled = zIdx >= steps.length - 1 || retentionSec <= 0;
+    if (oldest) oldest.disabled = atOldest || retentionSec <= 0;
+    if (liveBtn) {
+      liveBtn.disabled = live || retentionSec <= 0;
+      liveBtn.classList.toggle("active", live);
+    }
+    if (older) older.disabled = atOldest || retentionSec <= 0;
+    if (newer) newer.disabled = live || retentionSec <= 0;
+    /* Shortcut pills only look active when docked to live at that span */
+    const tabs = $("timeTabs");
+    if (tabs) {
+      [].forEach.call(tabs.querySelectorAll("button[data-sec]"), function (b) {
+        const sec = parseInt(b.getAttribute("data-sec"), 10) || 0;
+        const dis = retentionSec <= 0 || sec > retentionSec;
+        b.classList.toggle("active", !dis && live && sec === windowSec);
+      });
+    }
+    drawOverview();
+  }
+
+  function formatBytes(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (Math.round(n / 102.4) / 10) + " KB";
+    return (Math.round(n / (1024 * 102.4)) / 10) + " MB";
+  }
+
+  function applyRingMeta(m) {
+    if (!m) return;
+    if (m.ring_size) ringSize = m.ring_size;
+    if (m.retention_s != null) retentionSec = Number(m.retention_s) || 0;
+    else if (m.sample_cap != null && m.sample_interval != null) {
+      retentionSec = Number(m.sample_cap) * Number(m.sample_interval);
+    }
+    initOrClampWindowSec();
+    syncMetricTabEnable();
+    syncTimeTabEnable();
+    syncHistControls();
+  }
+
+  function syncMetricTabEnable() {
+    const noRing = retentionSec <= 0;
+    [].forEach.call($("metricTabs").querySelectorAll("button"), function (b) {
+      const id = b.getAttribute("data-metric");
+      const needsRing = id !== "logs" && id !== "top";
+      const dis = noRing && needsRing;
+      b.disabled = dis;
+      b.classList.toggle("tab-disabled", dis);
+    });
+    if (noRing && isRingHistory()) {
+      metricId = "logs";
+      [].forEach.call($("metricTabs").querySelectorAll("button"), function (b) {
+        b.classList.toggle("active", b.getAttribute("data-metric") === "logs");
+      });
+      setTimeout(function () { updateHistoryMode(); refreshLogsSafe(); }, 0);
+    }
+  }
+
+  function syncTimeTabEnable() {
+    const tabs = $("timeTabs");
+    if (!tabs) return;
+    const live = isLiveView();
+    if (retentionSec > 0 && windowSec > retentionSec) {
+      windowSec = retentionSec;
+      persistWindowSec();
+    }
+    [].forEach.call(tabs.querySelectorAll("button[data-sec]"), function (b) {
+      const sec = parseInt(b.getAttribute("data-sec"), 10) || 0;
+      const dis = retentionSec <= 0 || sec > retentionSec;
+      b.disabled = dis;
+      b.classList.toggle("tab-disabled", dis);
+      b.classList.toggle("active", !dis && live && sec === windowSec);
+    });
+    viewEndAgeSec = clampViewEndAge(viewEndAgeSec);
+  }
+
+  function closeRingModal() {
+    const m = $("ringModal");
+    if (m) m.hidden = true;
+    pendingRingSize = null;
+    const err = $("ringModalError");
+    if (err) err.textContent = "";
+  }
+
+  function closeLoginModal() {
+    const m = $("loginModal");
+    if (m) m.hidden = true;
+    const err = $("loginError");
+    if (err) err.textContent = "";
+    const pw = $("loginPassword");
+    if (pw) pw.value = "";
+  }
+
+  function openLoginModal() {
+    closeRingModal();
+    const m = $("loginModal");
+    if (!m) return;
+    $("loginError").textContent = "";
+    $("loginPassword").value = "";
+    m.hidden = false;
+    setTimeout(function () { $("loginPassword").focus(); }, 0);
+  }
+
+  async function fetchRingInfo() {
+    const data = await getJsonRetry(API + "?api=ring");
+    ringInfo = data;
+    isAdmin = !!data.is_admin;
+    applyRingMeta(data);
+    return data;
+  }
+
+  async function openRingModal() {
+    const modal = $("ringModal");
+    if (!modal) return;
+    closeLoginModal();
+    pendingRingSize = null;
+    modal.hidden = false;
+    try {
+      const data = await fetchRingInfo();
+      pendingRingSize = data.ring_size || null;
+      renderRingModal(data);
+    } catch (e) {
+      $("ringModalNote").textContent = "Failed to load ring options: " + e.message;
+    }
+  }
+
+  async function ensureAdminThenSetup() {
+    try {
+      const data = await fetchRingInfo();
+      if (data.is_admin) {
+        await openRingModal();
+        return;
+      }
+    } catch (e) {
+      /* fall through to login */
+    }
+    openLoginModal();
+  }
+
+  async function loginAsAdmin() {
+    const pw = $("loginPassword").value;
+    const err = $("loginError");
+    err.textContent = "";
+    if (!pw) {
+      err.textContent = "Enter the admin password";
+      return;
+    }
+    const url = location.origin + "/a/authenticate?version=1&password=" +
+      encodeURIComponent(pw);
+    const resp = await fetch(url, { credentials: "same-origin" });
+    if (!resp.ok) {
+      err.textContent = "Login request failed (" + resp.status + ")";
+      return;
+    }
+    const json = await resp.json();
+    $("loginPassword").value = "";
+    if (!json.authenticated) {
+      err.textContent = "Incorrect password";
+      return;
+    }
+    isAdmin = true;
+    closeLoginModal();
+    await openRingModal();
+  }
+
+  function currentRingSize() {
+    return (ringInfo && ringInfo.ring_size) || ringSize || "4h";
+  }
+
+  function syncRingFooter() {
+    const footer = $("ringModalFooter");
+    const confirmBtn = $("ringConfirmBtn");
+    if (!footer || !confirmBtn) return;
+    footer.hidden = !isAdmin;
+    const cur = currentRingSize();
+    const dirty = isAdmin && pendingRingSize != null && pendingRingSize !== cur;
+    confirmBtn.disabled = !dirty;
+  }
+
+  function renderRingModal(data) {
+    const note = $("ringModalNote");
+    const body = $("ringModalBody");
+    const err = $("ringModalError");
+    if (err) err.textContent = "";
+    if (!body) return;
+    const avail = data.mem_available_kb != null
+      ? formatMemKb(data.mem_available_kb) : "—";
+    const cur = data.ring_size || currentRingSize();
+    if (pendingRingSize == null) pendingRingSize = cur;
+    note.textContent = isAdmin
+      ? ("Free RAM ~" + avail + ". Options over 50% of effective free RAM are disabled. Confirm applies the change and clears history.")
+      : ("Free RAM ~" + avail + ". Admin login required to change the ring size.");
+    const opts = data.options || [];
+    body.innerHTML = opts.map(function (o) {
+      const isPending = pendingRingSize === o.id;
+      const isLive = !!o.selected || o.id === cur;
+      const dis = !o.allowed;
+      const cls = (isPending ? "sel " : "") + (dis ? "dis" : "");
+      const mark = isPending ? "●" : "";
+      let action = "";
+      if (isAdmin) {
+        if (dis) {
+          action = "blocked";
+        } else if (isPending && isLive) {
+          action = "current";
+        } else if (isPending) {
+          action = "chosen";
+        } else {
+          action = '<button type="button" class="pick" data-size="' + o.id + '">Choose</button>';
+        }
+      } else {
+        action = isLive ? "current" : (dis ? "blocked" : "");
+      }
+      return '<tr class="' + cls + '"><td>' + mark + "</td><td>" + o.label +
+        (isLive && !isPending ? ' <span style="color:var(--muted)">(live)</span>' : "") +
+        "</td><td>" + formatBytes(o.buffer_bytes) + "</td><td>" + action + "</td></tr>";
+    }).join("");
+    syncRingFooter();
+  }
+
+  function stageRingSize(size) {
+    if (!ringInfo || !ringInfo.options) return;
+    let opt = null;
+    for (let i = 0; i < ringInfo.options.length; i++) {
+      if (ringInfo.options[i].id === size) {
+        opt = ringInfo.options[i];
+        break;
+      }
+    }
+    if (!opt || !opt.allowed) return;
+    pendingRingSize = size;
+    renderRingModal(ringInfo);
+  }
+
+  function cancelRingChanges() {
+    pendingRingSize = currentRingSize();
+    closeRingModal();
+  }
+
+  async function confirmRingChanges() {
+    const cur = currentRingSize();
+    const err = $("ringModalError");
+    if (err) err.textContent = "";
+    if (!pendingRingSize || pendingRingSize === cur) {
+      closeRingModal();
+      return;
+    }
+    const confirmBtn = $("ringConfirmBtn");
+    if (confirmBtn) confirmBtn.disabled = true;
+    try {
+      await setRingSize(pendingRingSize);
+      /* Full reload so Samples KPI, time tabs, and history match the new ring */
+      location.reload();
+    } catch (e) {
+      if (err) err.textContent = e.message || "Failed to apply";
+      syncRingFooter();
+    }
+  }
+
+  async function setRingSize(size) {
+    const data = await getJsonRetry(API + "?api=ring&set=" + encodeURIComponent(size));
+    if (data.ok === false || data.error) {
+      throw new Error(data.error || "set failed");
+    }
+    ringInfo = data;
+    isAdmin = !!data.is_admin;
+    pendingRingSize = data.ring_size || size;
+    applyRingMeta(data);
+    series = [];
+    if (isRingHistory()) drawChart();
+  }
+
+  function fmtSourceMtime(sec) {
+    if (sec == null || sec === "") return "—";
+    const d = new Date(Number(sec) * 1000);
+    if (isNaN(d.getTime())) return "—";
+    function pad(v) { return v < 10 ? "0" + v : String(v); }
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+      " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+  }
+
+  function renderLogSourceMeta(data) {
+    const el = $("logSourceMeta");
+    if (!el) return;
+    const show = logSource === "lqm" || logSource === "dumps";
+    if (!show) {
+      el.hidden = true;
+      el.textContent = "";
+      el.removeAttribute("title");
+      return;
+    }
+    const path = (data && data.source_path) || "";
+    const mtime = data ? data.source_mtime : null;
+    el.textContent = fmtSourceMtime(mtime);
+    if (path) el.title = path;
+    else el.removeAttribute("title");
+    el.hidden = false;
+  }
+
+  function renderTextPanel(lines, emptyMsg, stickBottom) {
+    const box = $("textBox");
+    if (!lines || !lines.length) {
+      box.textContent = "";
+      const span = document.createElement("span");
+      span.className = "syslog-empty";
+      span.textContent = emptyMsg || "No output";
+      box.appendChild(span);
+      return;
+    }
+    box.textContent = lines.join("\n");
+    box.scrollTop = stickBottom ? box.scrollHeight : 0;
+  }
+
+  async function refreshLogs() {
+    if (textBusy) return;
+    textBusy = true;
+    try {
+      let url = API + "?api=logs&source=" + encodeURIComponent(logSource);
+      if (logSource === "syslog") {
+        const filters = selectedLogFilters();
+        url += "&limit=50&filters=" + (filters.length
+          ? filters.map(encodeURIComponent).join(",")
+          : "all");
+      } else if (logSource === "dmesg") {
+        url += "&limit=80";
+      }
+      const data = await getJsonRetry(url);
+      const stick = logSource === "syslog" && !syslogPaused;
+      renderTextPanel(data.lines || [], "No output", stick);
+      renderLogSourceMeta(data);
+    } finally {
+      textBusy = false;
+    }
+  }
+
+  async function refreshTop() {
+    if (textBusy) return;
+    textBusy = true;
+    try {
+      const data = await getJsonRetry(API + "?api=top");
+      renderTextPanel(data.lines || [], "No top output", false);
+    } finally {
+      textBusy = false;
+    }
+  }
+
+  function formatIface(iface) {
+    if (!iface) return "—";
+    const m = /^br0\.(\d+)$/i.exec(String(iface));
+    if (m) return "XLink(" + m[1] + ")";
+    return iface;
+  }
+
+  function formatTime(t) {
+    if (t == null) return "—";
+    const d = new Date(Number(t) * 1000);
+    if (isNaN(d.getTime())) return String(t);
+    const p = function (n) { return (n < 10 ? "0" : "") + n; };
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+      " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+
+  function formatVal(v) {
+    if (v == null || v !== v) return "—";
+    if (v === COST_UNREACH) return "UNREACH";
+    if (Math.abs(v - Math.round(v)) < 1e-6) return String(Math.round(v));
+    return (Math.round(v * 10) / 10).toString();
+  }
+
+  function formatMemKb(kb) {
+    if (kb == null || kb !== kb) return "—";
+    const n = Number(kb);
+    if (n >= 1024 * 1024) return (Math.round(n / 1024 / 1024 * 10) / 10) + " GB";
+    if (n >= 1024) return (Math.round(n / 1024 * 10) / 10) + " MB";
+    return Math.round(n) + " KB";
+  }
+
+  function formatAxisOffset(sec) {
+    sec = Math.max(0, Math.round(sec));
+    if (windowSec >= 86400) {
+      const h = Math.floor(sec / 3600);
+      return h + "h";
+    }
+    if (windowSec >= 3600) {
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      if (m === 0) return h + "h";
+      return h + "h" + m + "m";
+    }
+    if (windowSec >= 1800) {
+      const m = Math.floor(sec / 60);
+      return m + "m";
+    }
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    if (m === 0) return s + "s";
+    if (s === 0) return m + "m";
+    return m + "m" + (s < 10 ? "0" : "") + s + "s";
+  }
+
+  /** Wall-clock label for history X axis (no date — windows are ≤24h). */
+  function formatAxisClock(unixSec) {
+    const d = new Date(Number(unixSec) * 1000);
+    if (isNaN(d.getTime())) return "";
+    const p = function (n) { return (n < 10 ? "0" : "") + n; };
+    return p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  function xTickStep(spanSec) {
+    if (spanSec <= 300) return 60;       /* ≤5m → 1m */
+    if (spanSec <= 1800) return 300;     /* ≤30m → 5m */
+    if (spanSec <= 3600) return 600;     /* ≤1h → 10m */
+    if (spanSec <= 21600) return 3600;   /* ≤6h → 1h */
+    if (spanSec <= 86400) return 14400;  /* ≤24h → 4h */
+    return Math.max(60, Math.round(spanSec / 6));
+  }
+
+  /** Nice wall-clock tick unix times within [t0, t0+spanSec] (span is minute-aligned). */
+  function axisClockTicks(t0, spanSec) {
+    const step = xTickStep(spanSec);
+    const tEnd = t0 + spanSec;
+    const out = [];
+    for (let t = t0; t <= tEnd + 0.5; t += step) {
+      out.push(t);
+    }
+    if (out.length && out[out.length - 1] < tEnd - 0.5) out.push(tEnd);
+    return out;
+  }
+
+  function nowUnix() {
+    return Math.floor(Date.now() / 1000);
+  }
+
+  function floorToMinute(t) {
+    return Math.floor(Number(t) / 60) * 60;
+  }
+
+  function ceilToMinute(t) {
+    return Math.ceil(Number(t) / 60) * 60;
+  }
+
+  /**
+   * Absolute minute-aligned viewport for chart + series fetch.
+   * Left/right edges always fall on whole minutes; span is windowSec.
+   */
+  function computeViewWindow() {
+    const now = nowUnix();
+    const span = Math.max(60, Number(windowSec) || 60);
+    let tEnd;
+    if (isLiveView()) {
+      tEnd = ceilToMinute(now);
+    } else {
+      tEnd = Math.round((now - viewEndAgeSec) / 60) * 60;
+      const liveEnd = ceilToMinute(now);
+      const oldestEnd = floorToMinute(now - Math.max(0, retentionSec)) + span;
+      if (tEnd > liveEnd) tEnd = liveEnd;
+      if (retentionSec > 0 && tEnd < oldestEnd) tEnd = oldestEnd;
+    }
+    let t0 = tEnd - span;
+    if (retentionSec > 0) {
+      const oldestStart = floorToMinute(now - retentionSec);
+      if (t0 < oldestStart) {
+        t0 = oldestStart;
+        tEnd = t0 + span;
+      }
+    }
+    const endAge = Math.max(0, now - tEnd);
+    return { t0: t0, tEnd: tEnd, windowSec: span, endAge: endAge, now: now };
+  }
+
+  function seriesT0() {
+    if (!series.length) return 0;
+    const t = Number(series[0].t);
+    return t === t ? t : 0;
+  }
+
+  function xForTime(t, layout) {
+    const dt = Number(t) - layout.t0;
+    const frac = Math.max(0, Math.min(1, dt / layout.windowSec));
+    return layout.padL + frac * layout.plotW;
+  }
+
+  function colorAt(i) {
+    return PALETTE[i % PALETTE.length];
+  }
+
+  function resolveMetric() {
+    const base = METRICS[metricId] || METRICS.lq;
+    if (base.dynamic === "rf") {
+      const keys = {};
+      for (let i = 0; i < series.length; i++) {
+        const rf = series[i].rf;
+        if (!rf) continue;
+        for (const k in rf) {
+          if (Object.prototype.hasOwnProperty.call(rf, k)) keys[k] = true;
+        }
+      }
+      const names = Object.keys(keys).sort();
+      const out = [
+        { key: "mean_snr", label: "AVG", color: "#e6e8eb", width: 2.5 }
+      ];
+      for (let i = 0; i < names.length; i++) {
+        out.push({
+          key: names[i],
+          label: names[i],
+          color: colorAt(i),
+          width: 1.4,
+          fromRf: true
+        });
+      }
+      return { label: "RF", series: out, minY: 0 };
+    }
+    if (base.dynamic === "links") {
+      const keys = {};
+      for (let i = 0; i < series.length; i++) {
+        const links = series[i].links;
+        if (!links) continue;
+        for (const k in links) {
+          if (Object.prototype.hasOwnProperty.call(links, k)) keys[k] = true;
+        }
+      }
+      const names = Object.keys(keys).sort();
+      const out = [
+        { key: "tx_packets_delta", label: "Σ TX", color: "#e6e8eb", width: 2.2 },
+        { key: "rx_packets_delta", label: "Σ RX", color: "#9aa3ad", width: 2.2 }
+      ];
+      for (let i = 0; i < names.length; i++) {
+        const c0 = colorAt(i * 2);
+        const c1 = colorAt(i * 2 + 1);
+        out.push({
+          key: names[i],
+          label: names[i] + " TX",
+          color: c0,
+          width: 1.3,
+          fromLinks: true,
+          linkIdx: 0
+        });
+        out.push({
+          key: names[i],
+          label: names[i] + " RX",
+          color: c1,
+          width: 1.3,
+          fromLinks: true,
+          linkIdx: 1,
+          dash: true
+        });
+      }
+      return { label: "Link I/O", series: out, minY: 0 };
+    }
+    if (base.dynamic === "costs") {
+      const keys = {};
+      for (let i = 0; i < series.length; i++) {
+        const costs = series[i].costs;
+        if (!costs) continue;
+        for (const k in costs) {
+          if (Object.prototype.hasOwnProperty.call(costs, k)) keys[k] = true;
+        }
+      }
+      const names = Object.keys(keys).sort();
+      const out = [];
+      for (let i = 0; i < names.length; i++) {
+        out.push({
+          key: names[i],
+          label: names[i],
+          color: colorAt(i),
+          width: 1.5,
+          fromCosts: true
+        });
+      }
+      out.push({
+        key: "bad_cost_count",
+        label: "bad #",
+        color: PALETTE[3],
+        panel: "bottom",
+        bars: true
+      });
+      out.push({
+        key: "stuck_neighbor_count",
+        label: "stuck #",
+        color: PALETTE[1],
+        panel: "bottom",
+        bars: true
+      });
+      return { label: "Cost", series: out, minY: 0, stackedPanels: true };
+    }
+    return base;
+  }
+
+  function sampleValue(row, spec) {
+    if (spec.fromRf) {
+      if (!row.rf) return null;
+      const v = row.rf[spec.key];
+      return v == null ? null : Number(v);
+    }
+    if (spec.fromLinks) {
+      if (!row.links) return null;
+      const pair = row.links[spec.key];
+      if (pair == null) return null;
+      if (Array.isArray(pair)) {
+        const v = pair[spec.linkIdx];
+        return v == null ? null : Number(v);
+      }
+      if (spec.linkIdx === 0) return pair.tx == null ? null : Number(pair.tx);
+      return pair.rx == null ? null : Number(pair.rx);
+    }
+    if (spec.fromCosts) {
+      if (!row.costs) return null;
+      const v = row.costs[spec.key];
+      return v == null ? null : Number(v);
+    }
+    const v = row[spec.key];
+    return v == null ? null : Number(v);
+  }
+
+  function sleep(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  async function getJson(url) {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }
+
+  async function getJsonRetry(url, tries) {
+    tries = tries || 2;
+    let last = null;
+    for (let i = 0; i < tries; i++) {
+      try {
+        return await getJson(url);
+      } catch (e) {
+        last = e;
+        if (i + 1 < tries) await sleep(350);
+      }
+    }
+    throw last;
+  }
+
+  function setErr(msg) {
+    const el = $("err");
+    if (!msg) { el.hidden = true; el.textContent = ""; return; }
+    el.hidden = false;
+    el.textContent = msg;
+  }
+
+  function escAttr(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;")
+      .replace(/\n/g, "&#10;");
+  }
+
+  function fmtRss(kb) {
+    if (kb == null || kb === "") return "—";
+    const n = Number(kb);
+    if (n !== n) return "—";
+    if (n >= 1024) return (n / 1024).toFixed(1) + " MB";
+    return n + " KB";
+  }
+
+  function fmtUptime(sec) {
+    if (sec == null || sec === "") return "—";
+    let n = Math.floor(Number(sec));
+    if (n !== n || n < 0) return "—";
+    const days = Math.floor(n / 86400);
+    n %= 86400;
+    const h = Math.floor(n / 3600);
+    n %= 3600;
+    const m = Math.floor(n / 60);
+    const s = n % 60;
+    function pad(v) { return v < 10 ? "0" + v : String(v); }
+    const hms = pad(h) + ":" + pad(m) + ":" + pad(s);
+    return days > 0 ? days + "D " + hms : hms;
+  }
+
+  function renderKpis(live) {
+    const m = live.meta || {};
+    const s = live.latest || {};
+    if (m.mem_total_kb != null) {
+      memTotalKb = Number(m.mem_total_kb);
+    }
+    applyRingMeta(m);
+    $("identity").textContent =
+      (m.hostname || "?") + " · " + (m.node_id || "?") +
+      " · boot " + (m.boot_id || "?") +
+      " · " + (m.package_version || "") +
+      " · Uptime " + fmtUptime(s.uptime_s);
+    document.title = (m.hostname || "?") + " · babel-monitor";
+    /* [label, value, title] — titles explain the latest sample */
+    const items = [
+      ["Neighbors", s.neighbor_count ?? "—",
+        "Babel neighbors currently heard on this node"],
+      ["Routable", s.routable_count ?? "—",
+        "Neighbors Babel currently considers routable"],
+      ["Mean LQ", s.mean_lq != null ? s.mean_lq + "%" : "—",
+        "Average link quality across Babel neighbors (from reachability bits)"],
+      ["Mean cost", s.mean_cost ?? "—",
+        "Average Babel cost across neighbors (lower is better; 65535 = unreachable)"],
+      ["Stuck", s.stuck_neighbor_count ?? 0,
+        "Neighbors with cost 65535 and LQ ≥ 50 — same candidate rule as firmware babel hard-reset (this package only observes; it never restarts Babel)",
+        Number(s.stuck_neighbor_count) > 0 ? "bad" : "ok"],
+      ["TX Δ", s.tx_packets_delta ?? "—",
+        "Transmit packets counted since the previous sample (all mesh links)"],
+      ["RX Δ", s.rx_packets_delta ?? "—",
+        "Receive packets counted since the previous sample (all mesh links)"],
+      ["Retry Δ", s.tx_retries_delta ?? "—",
+        "Wireless TX retries since the previous sample"],
+      ["Fail Δ", s.tx_fail_delta ?? "—",
+        "Wireless TX failures since the previous sample"],
+      ["CPU", s.cpu_pct != null ? s.cpu_pct + "%" : "—",
+        "CPU busy percent over the last sample interval"],
+      ["CPU peak", s.cpu_peak_pct != null ? s.cpu_peak_pct + "%" : "—",
+        "Highest short-window CPU busy % seen since the previous sample"],
+      ["RAM used", s.mem_used_pct != null ? s.mem_used_pct + "%" : "—",
+        "System memory in use (percent of total RAM)"],
+      ["Self RSS", fmtRss(m.daemon_rss_kb),
+        "babel-monitord resident memory (VmRSS from /proc/self)"],
+      ["Hosts", s.host_count ?? "—",
+        "Host entries published via arednlink on this node"],
+      ["Samples", (m.sample_count ?? 0) + "/" + (m.sample_cap ?? 0),
+        (function () {
+          const cap = Number(m.sample_cap) || 0;
+          const interval = Number(m.sample_interval) || 10;
+          const ret = m.retention_s != null
+            ? Number(m.retention_s)
+            : (cap * interval);
+          const sizeLabel = m.ring_size || ringSize || "—";
+          if (cap <= 0) {
+            return "History ring fill: samples stored / maximum capacity. Ring size none (no history buffer).";
+          }
+          return "History ring fill: samples stored / maximum capacity. " +
+            "Capacity " + cap + " slots ≈ " + formatAxisOffset(ret) +
+            " at " + interval + "s interval (ring_size " + sizeLabel + ").";
+        })()],
+      ["LQM", s.lqm_ok ? "ok" : "not ok",
+        "Link Quality Manager data was readable for this sample",
+        s.lqm_ok ? "ok" : "warn"],
+      ["Babel", s.babel_ok ? "ok" : "not ok",
+        "Babel neighbor dump was readable for this sample",
+        s.babel_ok ? "ok" : "warn"]
+    ];
+    const wg = live.wg || {};
+    const wgTip =
+      "live = recent WireGuard handshake (≤300s)\n" +
+      "active = tunnel enabled\n" +
+      "total = entries in tunnel config\n" +
+      "shown as live/active/total";
+    function pushWg(label, st) {
+      if (!st || !(Number(st.total) > 0)) return;
+      items.push([
+        label,
+        (st.live ?? 0) + "/" + (st.active ?? 0) + "/" + (st.total ?? 0),
+        wgTip
+      ]);
+    }
+    pushWg("WG Server Tunnels", wg.server_tunnels);
+    pushWg("WG Server Clients", wg.clients);
+    $("kpis").innerHTML = items.map(function (it) {
+      const klass = it[3] ? " " + it[3] : "";
+      return '<div class="kpi' + klass + '" title="' + escAttr(it[2]) +
+        '"><div class="v">' + it[1] + '</div><div class="l">' + it[0] + "</div></div>";
+    }).join("");
+  }
+
+  function renderNeigh(list) {
+    const tb = $("neigh");
+    if (!list || !list.length) {
+      tb.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">No neighbors</td></tr>';
+      return;
+    }
+    tb.innerHTML = list.map(function (n) {
+      const host = n.hostname || "—";
+      const typ = n.type || formatIface(n.iface) || "—";
+      const rxd = n.rx_packets_delta != null ? n.rx_packets_delta : "—";
+      const txd = n.tx_packets_delta != null ? n.tx_packets_delta : "—";
+      const rowClass = n.stuck ? ' class="stuck"' : "";
+      const title = n.stuck
+        ? ' title="Stuck: cost 65535 with LQ ≥ 50 (firmware hard-reset candidate)"'
+        : "";
+      return "<tr" + rowClass + title + "><td>" + host + "</td><td>" + n.ipv6 +
+        "</td><td>" + typ +
+        "</td><td>" + n.lq + "%</td><td>" + n.cost + "</td><td>" + n.rxcost +
+        "</td><td>" + n.txcost + "</td><td>" + rxd + "</td><td>" + txd + "</td></tr>";
+    }).join("");
+  }
+
+  function fmtEventTime(t) {
+    if (t == null) return "—";
+    const d = new Date(Number(t) * 1000);
+    if (isNaN(d.getTime())) return String(t);
+    function pad(v) { return v < 10 ? "0" + v : String(v); }
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+      " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+  }
+
+  function renderEvents(list) {
+    const box = $("eventsBox");
+    if (!box) return;
+    const want = ["babel_stuck", "babel_unstuck", "babel_hard", "babel_soft", "neighbor_churn"];
+    const filtered = (list || []).filter(function (e) {
+      return want.indexOf(e.type) >= 0;
+    });
+    const tail = filtered.slice(-30);
+    if (!tail.length) {
+      box.textContent = "";
+      const span = document.createElement("span");
+      span.className = "events-empty";
+      span.textContent = "No routing events yet";
+      box.appendChild(span);
+      return;
+    }
+    box.textContent = tail.map(function (e) {
+      return fmtEventTime(e.t) + "  " + (e.type || "?") + "  " + (e.detail || "");
+    }).join("\n");
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function legendItemHtml(s) {
+    if (s.markers) {
+      return '<span><i style="background:' + s.color +
+        ';height:8px;width:8px;border-radius:50%"></i>' + s.label + "</span>";
+    }
+    if (s.bars) {
+      return '<span><i class="bar" style="background:' + s.color + '"></i>' +
+        s.label + "</span>";
+    }
+    if (s.dash) {
+      return '<span><i style="background:transparent;border-top:2px dashed ' +
+        s.color + ';height:0;width:14px;margin-top:4px"></i>' + s.label + "</span>";
+    }
+    return '<span><i style="background:' + s.color + '"></i>' + s.label + "</span>";
+  }
+
+  function renderLegend(metric) {
+    const top = [];
+    const bottom = [];
+    for (let i = 0; i < metric.series.length; i++) {
+      const s = metric.series[i];
+      if (s.panel === "bottom") bottom.push(s);
+      else top.push(s);
+    }
+    let html = top.map(legendItemHtml).join("");
+    if (metricId === "cost") {
+      html += '<span><i style="background:' + PALETTE[1] +
+        ';height:8px;width:8px;border-radius:50%"></i>UNREACH</span>';
+    }
+    $("legend").innerHTML = html;
+
+    const bot = $("legendBottom");
+    if (bot) {
+      if (bottom.length) {
+        bot.innerHTML = bottom.map(legendItemHtml).join("");
+        bot.hidden = false;
+      } else {
+        bot.innerHTML = "";
+        bot.hidden = true;
+      }
+    }
+  }
+
+  function yBounds(metric, lines, seriesSpecs, panel) {
+    let lo = metric.minY != null ? metric.minY : Infinity;
+    let hi = metric.maxY != null ? metric.maxY : -Infinity;
+    if (metric.minY == null || metric.maxY == null) {
+      for (let li = 0; li < lines.length; li++) {
+        const spec = seriesSpecs && seriesSpecs[li];
+        const specPanel = (spec && spec.panel) || "top";
+        if (panel && specPanel !== panel) continue;
+        const vals = lines[li];
+        for (let i = 0; i < vals.length; i++) {
+          const v = vals[i];
+          if (v == null || v !== v) continue;
+          /* Cost top: exclude Babel unreachable sentinel from scale */
+          if (metricId === "cost" && panel === "top" && v === COST_UNREACH) continue;
+          if (metric.minY == null && v < lo) lo = v;
+          if (metric.maxY == null && v > hi) hi = v;
+        }
+      }
+    }
+    if (!isFinite(lo)) lo = 0;
+    if (!isFinite(hi) || hi <= lo) hi = lo + 1;
+    if (metric.minY != null) lo = metric.minY;
+    if (metric.maxY != null) hi = Math.max(metric.maxY, hi);
+    /* Cost top: exclude UNREACH from scale; snap hi to nice integer caps */
+    if (metricId === "cost" && panel === "top") {
+      lo = 0;
+      let need = Math.max(hi * 1.15, 1);
+      if (need > COST_SOFT_CAP) need = COST_SOFT_CAP;
+      hi = COST_Y_CAPS[COST_Y_CAPS.length - 1];
+      for (let ci = 0; ci < COST_Y_CAPS.length; ci++) {
+        if (need <= COST_Y_CAPS[ci]) {
+          hi = COST_Y_CAPS[ci];
+          break;
+        }
+      }
+    }
+    if (metricId === "cost" && panel === "bottom") {
+      lo = 0;
+      hi = Math.max(1, Math.ceil(hi));
+    }
+    return { lo: lo, hi: hi };
+  }
+
+  function hideTip() {
+    const tip = $("chartTip");
+    tip.style.display = "none";
+    tip.hidden = true;
+  }
+
+  function showTip(metric, idx, clientX, clientY) {
+    const tip = $("chartTip");
+    const wrap = tip.parentElement;
+    const row = series[idx];
+    if (!row) { hideTip(); return; }
+
+    let html = '<div class="t">' + formatTime(row.t) +
+      (row.seq != null ? " · seq " + row.seq : "") + "</div>";
+
+    if (metricId === "ram") {
+      const pct = row.mem_used_pct;
+      const avail = row.mem_available_kb;
+      let usedKb = null;
+      if (memTotalKb != null && avail != null) {
+        usedKb = Math.max(0, Number(memTotalKb) - Number(avail));
+      } else if (memTotalKb != null && pct != null) {
+        usedKb = Math.round(Number(memTotalKb) * Number(pct) / 100);
+      }
+      html += '<div class="tip-row"><span class="n"><i style="background:' +
+        PALETTE[0] + '"></i>used</span><span class="v">' +
+        formatVal(pct) + "% · " + formatMemKb(usedKb) + "</span></div>";
+      html += '<div class="tip-row"><span class="n"><i style="background:' +
+        PALETTE[2] + '"></i>available</span><span class="v">' +
+        formatMemKb(avail) + "</span></div>";
+      if (memTotalKb != null) {
+        html += '<div class="tip-row"><span class="n"><i style="background:' +
+          PALETTE[1] + '"></i>total</span><span class="v">' +
+          formatMemKb(memTotalKb) + "</span></div>";
+      }
+    } else {
+      for (let si = 0; si < metric.series.length; si++) {
+        const spec = metric.series[si];
+        const v = sampleValue(row, spec);
+        html += '<div class="tip-row"><span class="n"><i style="background:' +
+          spec.color + '"></i>' + spec.label + '</span><span class="v">' +
+          formatVal(v) + "</span></div>";
+      }
+    }
+    tip.innerHTML = html;
+    tip.hidden = false;
+    tip.style.display = "block";
+
+    const wr = wrap.getBoundingClientRect();
+    const tw = tip.offsetWidth || 160;
+    const th = tip.offsetHeight || 80;
+    let left = clientX - wr.left + 14;
+    let top = clientY - wr.top - th - 10;
+    if (left + tw > wr.width - 4) left = clientX - wr.left - tw - 14;
+    if (left < 4) left = 4;
+    if (top < 4) top = clientY - wr.top + 16;
+    tip.style.left = left + "px";
+    tip.style.top = top + "px";
+  }
+
+  function indexFromCanvasX(cssX, cssW) {
+    if (!chartLayout || !series.length) return -1;
+    const scaleX = $("chart").width / Math.max(1, cssW);
+    const x = cssX * scaleX;
+    const { padL, plotW, t0, windowSec: win } = chartLayout;
+    if (x < padL || x > padL + plotW) return -1;
+    const targetT = t0 + ((x - padL) / plotW) * win;
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < series.length; i++) {
+      const ti = Number(series[i].t);
+      if (ti !== ti) continue;
+      const d = Math.abs(ti - targetT);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    /* Only snap when cursor is near an actual sample in time */
+    const sampleSpan = Math.max(1, win / Math.max(20, series.length));
+    if (bestDist > sampleSpan * 2 && bestDist > 15) return -1;
+    return best;
+  }
+
+  function drawAxes(ctx, w, h, layout, bounds, opts) {
+    opts = opts || {};
+    const { padL, padR, padT, padB, plotW, plotH } = layout;
+    const axisY = padT + plotH;
+    const drawTime = opts.drawTime !== false;
+    const labelHi = opts.roundY ? String(Math.round(bounds.hi)) : String(bounds.hi);
+    const labelLo = opts.roundY ? String(Math.round(bounds.lo)) : String(bounds.lo);
+
+    ctx.strokeStyle = "#3a424d";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padL, padT);
+    ctx.lineTo(padL, axisY);
+    ctx.lineTo(w - padR, axisY);
+    ctx.stroke();
+
+    ctx.fillStyle = "#9aa3ad";
+    ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(labelHi, 4, padT + 8);
+    ctx.fillText(labelLo, 4, axisY);
+    if (opts.title) {
+      ctx.fillText(opts.title, padL + 4, padT + 9);
+    }
+
+    if (drawTime) {
+      const t0 = Number(layout.t0) || 0;
+      const span = layout.windowSec;
+      ctx.textAlign = "center";
+      if (t0 > 0 && span > 0) {
+        const ticks = axisClockTicks(t0, span);
+        for (let i = 0; i < ticks.length; i++) {
+          const tu = ticks[i];
+          const frac = Math.max(0, Math.min(1, (tu - t0) / span));
+          const x = padL + frac * plotW;
+          ctx.strokeStyle = "#3a424d";
+          ctx.beginPath();
+          ctx.moveTo(x, axisY);
+          ctx.lineTo(x, axisY + 5);
+          ctx.stroke();
+          ctx.fillStyle = "#9aa3ad";
+          const label = formatAxisClock(tu);
+          if (i === 0) {
+            ctx.textAlign = "left";
+            ctx.fillText(label, x, axisY + 16);
+            ctx.textAlign = "center";
+          } else if (i === ticks.length - 1) {
+            ctx.textAlign = "end";
+            ctx.fillText(label, x, axisY + 16);
+            ctx.textAlign = "center";
+          } else {
+            ctx.fillText(label, x, axisY + 16);
+          }
+        }
+      }
+      ctx.fillStyle = "#9aa3ad";
+      ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Time", padL + plotW / 2, h - 6);
+      ctx.textAlign = "left";
+    }
+  }
+
+  function syncChartCanvasSize(stacked) {
+    const c = $("chart");
+    if (stacked) {
+      c.width = 1000;
+      c.height = 340;
+      c.classList.add("cost-stack");
+    } else {
+      c.width = 1000;
+      c.height = 210;
+      c.classList.remove("cost-stack");
+    }
+  }
+
+  function drawChart() {
+    if (skipsSeriesChart()) return;
+    const metric = resolveMetric();
+    renderLegend(metric);
+    const stacked = metricId === "cost" && !!metric.stackedPanels;
+    syncChartCanvasSize(stacked);
+    const c = $("chart");
+    const ctx = c.getContext("2d");
+    const w = c.width, h = c.height;
+    const padL = 44, padR = 18;
+    const vw = computeViewWindow();
+    const t0 = vw.t0;
+    const axisSpan = vw.windowSec;
+
+    let panels;
+    if (stacked) {
+      /* Top: neighbor costs; bottom: bad/stuck — shared time axis on bottom only */
+      const topPadT = 16, topPlotH = 168, gap = 14, botPadT = 12, botPlotH = 72, botPadB = 42;
+      const topPadB = gap;
+      panels = [
+        {
+          id: "top",
+          padL: padL, padR: padR, padT: topPadT, padB: topPadB,
+          plotW: w - padL - padR, plotH: topPlotH,
+          axisY: topPadT + topPlotH,
+          drawTime: false,
+          unreachBand: true,
+          title: null
+        },
+        {
+          id: "bottom",
+          padL: padL, padR: padR,
+          padT: topPadT + topPlotH + gap + botPadT,
+          padB: botPadB,
+          plotW: w - padL - padR, plotH: botPlotH,
+          axisY: topPadT + topPlotH + gap + botPadT + botPlotH,
+          drawTime: true,
+          unreachBand: false,
+          title: null
+        }
+      ];
+    } else {
+      const padT = 14, padB = 42;
+      const plotH = h - padT - padB;
+      panels = [{
+        id: "top",
+        padL: padL, padR: padR, padT: padT, padB: padB,
+        plotW: w - padL - padR, plotH: plotH,
+        axisY: h - padB,
+        drawTime: true,
+        unreachBand: false,
+        title: null
+      }];
+    }
+
+    chartLayout = {
+      padL: padL, padR: padR, padT: panels[0].padT, padB: panels[panels.length - 1].padB,
+      plotW: panels[0].plotW, plotH: panels[0].plotH,
+      t0: t0, windowSec: axisSpan, n: series.length,
+      stacked: stacked, panels: panels
+    };
+    ctx.clearRect(0, 0, w, h);
+
+    const emptyBounds = { lo: 0, hi: 1 };
+    function drawEmpty(msg) {
+      drawAxes(ctx, w, h, {
+        padL: panels[0].padL, padR: panels[0].padR, padT: panels[0].padT,
+        padB: panels[0].padB, plotW: panels[0].plotW, plotH: panels[0].plotH,
+        windowSec: axisSpan, t0: t0
+      }, emptyBounds, { drawTime: true });
+      ctx.fillStyle = "#9aa3ad";
+      ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+      ctx.fillText(msg, padL + 10, panels[0].padT + panels[0].plotH / 2);
+      hideTip();
+    }
+
+    if (!series.length) {
+      drawEmpty("No samples in window");
+      return;
+    }
+
+    if (metricId === "rf") {
+      const anyRf = series.some(function (s) {
+        return (s.rf && Object.keys(s.rf).length) || (s.mean_snr != null && s.mean_snr > 0);
+      });
+      if (!anyRf) {
+        drawEmpty("No RF neighbors in window");
+        return;
+      }
+    }
+
+    if (metricId === "linkio") {
+      const anyLinks = series.some(function (s) {
+        return (s.links && Object.keys(s.links).length) ||
+          (s.tx_packets_delta != null && s.tx_packets_delta > 0) ||
+          (s.rx_packets_delta != null && s.rx_packets_delta > 0);
+      });
+      if (!anyLinks) {
+        drawEmpty("No link I/O in window");
+        return;
+      }
+    }
+
+    if (metricId === "cost") {
+      const anyCost = series.some(function (s) {
+        return (s.costs && Object.keys(s.costs).length) ||
+          (s.bad_cost_count != null) || (s.stuck_neighbor_count != null);
+      });
+      if (!anyCost) {
+        drawEmpty("No neighbor cost history in window yet");
+        return;
+      }
+    }
+
+    const lines = metric.series.map(function (s) {
+      return series.map(function (row) { return sampleValue(row, s); });
+    });
+
+    const panelBounds = {};
+    for (let pi = 0; pi < panels.length; pi++) {
+      const p = panels[pi];
+      panelBounds[p.id] = yBounds(metric, lines, metric.series, stacked ? p.id : "top");
+    }
+
+    const n = series.length;
+    const markerPasses = [];
+    const unreachMarks = [];
+
+    for (let pi = 0; pi < panels.length; pi++) {
+      const p = panels[pi];
+      const bounds = panelBounds[p.id];
+      const span = bounds.hi - bounds.lo;
+      drawAxes(ctx, w, h, {
+        padL: p.padL, padR: p.padR, padT: p.padT, padB: p.padB,
+        plotW: p.plotW, plotH: p.plotH, windowSec: axisSpan, t0: t0
+      }, bounds, {
+        drawTime: p.drawTime,
+        roundY: metricId === "cost" || p.id === "bottom"
+      });
+
+      if (p.unreachBand) {
+        ctx.fillStyle = "rgba(217,123,123,0.10)";
+        ctx.fillRect(p.padL, p.padT, p.plotW, 12);
+        ctx.fillStyle = "#9aa3ad";
+        ctx.font = "10px ui-sans-serif, system-ui, sans-serif";
+        ctx.textAlign = "right";
+        ctx.fillText("UNREACH", w - p.padR - 4, p.padT + 9);
+        ctx.textAlign = "left";
+      }
+
+      /* Collect bar series for grouped bars on this panel */
+      const barSpecs = [];
+      for (let si = 0; si < metric.series.length; si++) {
+        const spec = metric.series[si];
+        const specPanel = spec.panel || "top";
+        if (stacked && specPanel !== p.id) continue;
+        if (!stacked && spec.panel === "bottom") continue;
+        if (spec.bars) barSpecs.push({ si: si, spec: spec });
+      }
+
+      if (barSpecs.length) {
+        const slot = n > 1 ? (p.plotW / Math.max(1, n - 1)) : p.plotW / 20;
+        const barW = Math.max(2, Math.min(10, slot * 0.32));
+        const groupW = barSpecs.length * barW + Math.max(0, barSpecs.length - 1);
+        for (let i = 0; i < n; i++) {
+          const ti = Number(series[i].t);
+          if (ti !== ti) continue;
+          const dt = ti - t0;
+          if (dt < 0 || dt > axisSpan) continue;
+          const x = xForTime(ti, chartLayout);
+          const left0 = x - groupW / 2;
+          for (let bi = 0; bi < barSpecs.length; bi++) {
+            const v = lines[barSpecs[bi].si][i];
+            if (v == null || v !== v || v < 0) continue;
+            const bx = left0 + bi * (barW + 1);
+            /* Zero: short stub so the series stays visible when counts are idle */
+            let bh;
+            if (v === 0) bh = 2;
+            else bh = Math.max(2, ((v - bounds.lo) / span) * p.plotH);
+            const by = p.axisY - bh;
+            ctx.fillStyle = barSpecs[bi].spec.color;
+            ctx.globalAlpha = v === 0 ? 0.45 : 0.85;
+            ctx.fillRect(bx, by, barW, bh);
+            ctx.globalAlpha = 1;
+          }
+        }
+      }
+
+      for (let si = 0; si < metric.series.length; si++) {
+        const spec = metric.series[si];
+        const specPanel = spec.panel || "top";
+        if (stacked && specPanel !== p.id) continue;
+        if (!stacked && spec.panel === "bottom") continue;
+        if (spec.bars) continue;
+
+        const vals = lines[si];
+        ctx.strokeStyle = spec.color;
+        ctx.lineWidth = spec.width || 1.5;
+        if (spec.dash) ctx.setLineDash([5, 4]);
+        else ctx.setLineDash([]);
+        ctx.beginPath();
+        let started = false;
+        const pts = [];
+        for (let i = 0; i < n; i++) {
+          const v = vals[i];
+          if (v == null || v !== v) {
+            started = false;
+            continue;
+          }
+          const ti = Number(series[i].t);
+          if (ti !== ti) {
+            started = false;
+            continue;
+          }
+          const dt = ti - t0;
+          if (dt < 0 || dt > axisSpan) {
+            started = false;
+            continue;
+          }
+          if (metricId === "cost" && spec.fromCosts && v === COST_UNREACH) {
+            started = false;
+            unreachMarks.push({ x: xForTime(ti, chartLayout), color: spec.color, y: p.padT + 6 });
+            continue;
+          }
+          const x = xForTime(ti, chartLayout);
+          const y = p.axisY - ((v - bounds.lo) / span) * p.plotH;
+          if (!started) { ctx.moveTo(x, y); started = true; }
+          else ctx.lineTo(x, y);
+          if (spec.markers) pts.push({ x: x, y: y });
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (spec.markers && pts.length) {
+          markerPasses.push({ color: spec.color, pts: pts });
+        }
+      }
+    }
+
+    for (let ui = 0; ui < unreachMarks.length; ui++) {
+      const m = unreachMarks[ui];
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, 3.2, 0, Math.PI * 2);
+      ctx.fillStyle = m.color;
+      ctx.fill();
+      ctx.strokeStyle = "#15181c";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    function drawMark(x, y, color) {
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = "#f4f6f8";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.strokeStyle = "#15181c";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    for (let mi = 0; mi < markerPasses.length; mi++) {
+      const pass = markerPasses[mi];
+      const pts = pass.pts;
+      const step = pts.length > 90 ? 3 : (pts.length > 45 ? 2 : 1);
+      for (let pi = 0; pi < pts.length; pi += step) {
+        drawMark(pts[pi].x, pts[pi].y, pass.color);
+      }
+      if ((pts.length - 1) % step !== 0) {
+        const pt = pts[pts.length - 1];
+        drawMark(pt.x, pt.y, pass.color);
+      }
+    }
+
+    if (hoverIdx >= 0 && hoverIdx < n) {
+      const ti = Number(series[hoverIdx].t);
+      if (ti === ti) {
+        const x = xForTime(ti, chartLayout);
+        ctx.strokeStyle = "rgba(230, 232, 235, 0.55)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(x, panels[0].padT);
+        ctx.lineTo(x, panels[panels.length - 1].axisY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        for (let si = 0; si < metric.series.length; si++) {
+          const v = lines[si][hoverIdx];
+          if (v == null || v !== v) continue;
+          const spec = metric.series[si];
+          const specPanel = spec.panel || "top";
+          const p = stacked
+            ? (panels[specPanel === "bottom" ? 1 : 0])
+            : panels[0];
+          const bounds = panelBounds[p.id];
+          const span = bounds.hi - bounds.lo;
+          let y;
+          if (metricId === "cost" && spec.fromCosts && v === COST_UNREACH) {
+            y = p.padT + 6;
+          } else {
+            y = p.axisY - ((v - bounds.lo) / span) * p.plotH;
+          }
+          ctx.fillStyle = spec.color;
+          ctx.beginPath();
+          ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#15181c";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
+  function onChartMove(ev) {
+    if (skipsSeriesChart()) return;
+    const c = $("chart");
+    const rect = c.getBoundingClientRect();
+    const idx = indexFromCanvasX(ev.clientX - rect.left, rect.width);
+    if (idx < 0) {
+      if (hoverIdx !== -1) {
+        hoverIdx = -1;
+        drawChart();
+      }
+      hideTip();
+      return;
+    }
+    const moved = idx !== hoverIdx;
+    hoverIdx = idx;
+    if (moved) drawChart();
+    showTip(resolveMetric(), idx, ev.clientX, ev.clientY);
+  }
+
+  function onChartLeave() {
+    hoverIdx = -1;
+    hideTip();
+    drawChart();
+  }
+
+  async function refreshLive() {
+    const live = await getJsonRetry(API + "?api=live");
+    renderKpis(live);
+    renderNeigh(live.neighbors || []);
+  }
+
+  async function refreshEvents() {
+    const data = await getJsonRetry(API + "?api=events&since_seq=0&limit=80");
+    renderEvents(data.events || []);
+  }
+
+  async function refreshSeries() {
+    if (skipsSeriesChart()) {
+      series = [];
+      drawOverview();
+      return;
+    }
+    if (!(windowSec > 0)) {
+      series = [];
+      drawOverview();
+      return;
+    }
+    viewEndAgeSec = clampViewEndAge(viewEndAgeSec);
+    const vw = computeViewWindow();
+    /* Keep pan state on the snapped minute so Live/overview stay consistent */
+    if (!isLiveView()) viewEndAgeSec = vw.endAge;
+    const slice = 300; /* match server SERIES_SLICE_S — one expand peak at a time */
+    const want = vw.windowSec;
+    const baseEnd = vw.endAge;
+    let all = [];
+    if (want <= slice) {
+      const data = await getJsonRetry(
+        API + "?api=series&seconds=" + want + "&end_age=" + baseEnd
+      );
+      all = data.samples || [];
+    } else {
+      for (let endAge = baseEnd + want - slice; endAge >= baseEnd; endAge -= slice) {
+        const sec = Math.min(slice, baseEnd + want - endAge);
+        const data = await getJsonRetry(
+          API + "?api=series&seconds=" + sec + "&end_age=" + endAge
+        );
+        const part = data.samples || [];
+        for (let i = 0; i < part.length; i++) all.push(part[i]);
+      }
+      /* Dedupe by seq (slice edges can overlap by one sample) */
+      all.sort(function (a, b) { return (a.seq || 0) - (b.seq || 0); });
+      const dedup = [];
+      let lastSeq = -1;
+      for (let i = 0; i < all.length; i++) {
+        const s = all[i];
+        const seq = s.seq || 0;
+        if (seq === lastSeq) continue;
+        dedup.push(s);
+        lastSeq = seq;
+      }
+      all = dedup;
+    }
+    series = all;
+    if (hoverIdx >= series.length) {
+      hoverIdx = series.length ? series.length - 1 : -1;
+      if (hoverIdx < 0) hideTip();
+    }
+    drawChart();
+    drawOverview();
+    syncHistControls();
+  }
+
+  function drawOverview() {
+    const c = $("overview");
+    if (!c || skipsSeriesChart() || retentionSec <= 0) return;
+    const wrap = $("chartWrap");
+    if (wrap && wrap.hidden) return;
+    const cssW = Math.max(200, Math.floor(c.getBoundingClientRect().width || c.parentElement.clientWidth || 1000));
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.round(cssW * dpr);
+    const h = Math.round(28 * dpr);
+    if (c.width !== w || c.height !== h) {
+      c.width = w;
+      c.height = h;
+    }
+    const ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#1a1d23";
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = "#3a424d";
+    ctx.strokeRect(0.5 * dpr, 0.5 * dpr, w - dpr, h - dpr);
+    const maxEnd = maxViewEndAge();
+    const age = clampViewEndAge(viewEndAgeSec);
+    const winFrac = Math.min(1, windowSec / retentionSec);
+    const winW = Math.max(3 * dpr, winFrac * w);
+    const rightFrac = age / retentionSec;
+    const winRight = w - rightFrac * w;
+    const winLeft = winRight - winW;
+    ctx.fillStyle = "rgba(91, 159, 212, 0.35)";
+    ctx.fillRect(winLeft, dpr, winW, h - 2 * dpr);
+    ctx.strokeStyle = "#5b9fd4";
+    ctx.lineWidth = dpr;
+    ctx.strokeRect(winLeft + 0.5 * dpr, dpr + 0.5 * dpr, winW - dpr, h - 3 * dpr);
+  }
+
+  function overviewEndAgeFromClientX(clientX) {
+    const c = $("overview");
+    const rect = c.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const ageAtClick = (1 - frac) * retentionSec;
+    return clampViewEndAge(ageAtClick - windowSec / 2);
+  }
+
+  function refreshSeriesSafe() {
+    refreshSeries().catch(function (e) {
+      failStreak++;
+      if (failStreak >= 2) setErr(e.message);
+    });
+  }
+
+  async function tick() {
+    if (tickBusy) return;
+    tickBusy = true;
+    try {
+      await refreshLive();
+      await refreshEvents();
+      if (isLogs()) {
+        if (logSource !== "syslog" || !syslogPaused) await refreshLogs();
+      } else if (isTop()) {
+        await refreshTop();
+      } else if (retentionSec > 0) {
+        await refreshSeries();
+      }
+      failStreak = 0;
+      setErr(null);
+    } catch (e) {
+      failStreak++;
+      if (failStreak >= 2) {
+        setErr("API error: " + e.message + " (is babel-monitord running?)");
+      }
+    } finally {
+      tickBusy = false;
+    }
+  }
+
+  function bindTabGroup(id, onPick) {
+    $(id).addEventListener("click", function (ev) {
+      const b = ev.target.closest("button");
+      if (!b || !$(id).contains(b) || b.disabled) return;
+      [].forEach.call($(id).querySelectorAll("button"), function (x) {
+        x.classList.toggle("active", x === b);
+      });
+      onPick(b);
+    });
+  }
+
+  function refreshLogsSafe() {
+    refreshLogs().catch(function (e) {
+      failStreak++;
+      if (failStreak >= 2) setErr(e.message);
+    });
+  }
+
+  bindTabGroup("metricTabs", function (b) {
+    metricId = b.getAttribute("data-metric") || "lq";
+    hoverIdx = -1;
+    hideTip();
+    updateHistoryMode();
+    if (isLogs()) {
+      if (logSource !== "syslog" || !syslogPaused) refreshLogsSafe();
+    } else if (isTop()) {
+      refreshTop().catch(function (e) {
+        failStreak++;
+        if (failStreak >= 2) setErr(e.message);
+      });
+    } else {
+      drawChart();
+    }
+  });
+
+  bindTabGroup("logSourceTabs", function (b) {
+    logSource = b.getAttribute("data-source") || "syslog";
+    updateHistoryMode();
+    refreshLogsSafe();
+  });
+
+  bindTabGroup("timeTabs", function (b) {
+    if (skipsSeriesChart()) return;
+    applyShortcut(parseInt(b.getAttribute("data-sec"), 10));
+    hoverIdx = -1;
+    hideTip();
+    refreshSeriesSafe();
+  });
+
+  function afterPanZoom() {
+    hoverIdx = -1;
+    hideTip();
+    syncHistControls();
+    refreshSeriesSafe();
+  }
+
+  $("histZoomOutBtn").addEventListener("click", function () {
+    if (skipsSeriesChart()) return;
+    applyZoomStep(1);
+    afterPanZoom();
+  });
+  $("histZoomInBtn").addEventListener("click", function () {
+    if (skipsSeriesChart()) return;
+    applyZoomStep(-1);
+    afterPanZoom();
+  });
+  $("histOldestBtn").addEventListener("click", function () {
+    if (skipsSeriesChart()) return;
+    goOldest();
+    afterPanZoom();
+  });
+  $("histLiveBtn").addEventListener("click", function () {
+    if (skipsSeriesChart()) return;
+    goLive();
+    afterPanZoom();
+  });
+  $("histOlderBtn").addEventListener("click", function () {
+    if (skipsSeriesChart()) return;
+    nudgeHistory(1);
+    afterPanZoom();
+  });
+  $("histNewerBtn").addEventListener("click", function () {
+    if (skipsSeriesChart()) return;
+    nudgeHistory(-1);
+    afterPanZoom();
+  });
+
+  (function bindOverview() {
+    const c = $("overview");
+    if (!c) return;
+    c.addEventListener("pointerdown", function (ev) {
+      if (skipsSeriesChart()) return;
+      c.setPointerCapture(ev.pointerId);
+      const rect = c.getBoundingClientRect();
+      overviewDrag = {
+        startX: ev.clientX,
+        startAge: viewEndAgeSec,
+        width: rect.width,
+        moved: false
+      };
+    });
+    c.addEventListener("pointermove", function (ev) {
+      if (!overviewDrag || skipsSeriesChart()) return;
+      const dx = ev.clientX - overviewDrag.startX;
+      if (!overviewDrag.moved && Math.abs(dx) < 4) return;
+      overviewDrag.moved = true;
+      const dAge = -(dx / overviewDrag.width) * retentionSec;
+      viewEndAgeSec = clampViewEndAge(overviewDrag.startAge + dAge);
+      syncHistControls();
+    });
+    c.addEventListener("pointerup", function (ev) {
+      if (!overviewDrag) return;
+      const wasDrag = overviewDrag.moved;
+      overviewDrag = null;
+      if (!wasDrag) {
+        viewEndAgeSec = overviewEndAgeFromClientX(ev.clientX);
+      }
+      afterPanZoom();
+    });
+    c.addEventListener("pointercancel", function () {
+      overviewDrag = null;
+    });
+  })();
+
+  window.addEventListener("resize", function () {
+    drawOverview();
+  });
+
+  $("syslogFilters").addEventListener("click", function (ev) {
+    const b = ev.target.closest("button[data-filter]");
+    if (!b || !$("syslogFilters").contains(b)) return;
+    const f = b.getAttribute("data-filter");
+    if (f === "all") {
+      logFilterAll = true;
+      for (const k in logFilterOn) logFilterOn[k] = false;
+    } else if (logFilterOn.hasOwnProperty(f)) {
+      if (logFilterAll) {
+        logFilterAll = false;
+        for (const k in logFilterOn) logFilterOn[k] = false;
+        logFilterOn[f] = true;
+      } else {
+        logFilterOn[f] = !logFilterOn[f];
+        ensureLogFilterFallback();
+      }
+    }
+    syncLogFilterButtons();
+    if (!syslogPaused) refreshLogsSafe();
+  });
+
+  $("logDownloadBtn").addEventListener("click", function () {
+    const a = document.createElement("a");
+    a.href = API + "?api=download&source=" + encodeURIComponent(logSource);
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+
+  $("syslogPauseBtn").addEventListener("click", function () {
+    syslogPaused = !syslogPaused;
+    syncSyslogPauseBtn();
+    if (!syslogPaused) refreshLogsSafe();
+  });
+
+  $("setupBtn").addEventListener("click", function () {
+    ensureAdminThenSetup().catch(function (e) {
+      setErr("Setup: " + e.message);
+    });
+  });
+  $("ringModalClose").addEventListener("click", cancelRingChanges);
+  $("ringModal").addEventListener("click", function (ev) {
+    if (ev.target === $("ringModal")) cancelRingChanges();
+  });
+  $("ringModalBody").addEventListener("click", function (ev) {
+    const b = ev.target.closest("button.pick");
+    if (!b || b.disabled) return;
+    const size = b.getAttribute("data-size");
+    if (size) stageRingSize(size);
+  });
+  $("ringCancelBtn").addEventListener("click", cancelRingChanges);
+  $("ringConfirmBtn").addEventListener("click", function () {
+    confirmRingChanges().catch(function (e) {
+      $("ringModalError").textContent = e.message || "Failed to apply";
+      syncRingFooter();
+    });
+  });
+  $("loginModalClose").addEventListener("click", closeLoginModal);
+  $("loginModal").addEventListener("click", function (ev) {
+    if (ev.target === $("loginModal")) closeLoginModal();
+  });
+  $("loginSubmitBtn").addEventListener("click", function () {
+    loginAsAdmin().catch(function (e) {
+      $("loginError").textContent = e.message || "Login failed";
+    });
+  });
+  $("loginPassword").addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      loginAsAdmin().catch(function (e) {
+        $("loginError").textContent = e.message || "Login failed";
+      });
+    }
+  });
+
+  (function bindChartHover() {
+    const c = $("chart");
+    c.addEventListener("mousemove", onChartMove);
+    c.addEventListener("mouseleave", onChartLeave);
+  })();
+
+  updateHistoryMode();
+  tick();
+  setInterval(tick, 10000);
+})();
+</script>
+</body>
+</html>
