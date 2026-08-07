@@ -4,7 +4,7 @@ Side-loaded AREDN APK that keeps Babel / LQM / arednlink metrics in RAM, exposes
 stateless JSON pull API for external historians, a public status page, and a
 live-config CLI.
 
-- Package: `babel-monitor-0.1.66-r0.apk`
+- Package: `babel-monitor-0.1.69-r0.apk`
 - Daemon: `babel-monitord`
 - CLI: `babel-monitor`
 - Status UI: `/babel-monitor/`
@@ -17,7 +17,7 @@ live-config CLI.
 ./build.sh
 ```
 
-APK lands in `dist/babel-monitor-0.1.66-r0.apk`.
+APK lands in `dist/babel-monitor-0.1.69-r0.apk`.
 
 ## Install on a node
 
@@ -30,7 +30,7 @@ From the work-area root (after configuring `install_package_remotely.conf`):
 Or copy the APK and:
 
 ```sh
-apk add --allow-untrusted /tmp/babel-monitor-0.1.66-r0.apk
+apk add --allow-untrusted /tmp/babel-monitor-0.1.69-r0.apk
 ```
 
 ## On-node storage
@@ -80,16 +80,17 @@ Base: `/cgi-bin/babel-monitor`
 | `?api=events&since_seq=N` | Event ring |
 | `?api=live` | Current neighbors + latest sample + optional `wg` tunnel counts |
 | `?api=series&seconds=S&end_age=A` | Samples in `[now-A-S, now-A]` (S capped at **300**/5m per request; UI fetches longer windows as slices) |
-| `?api=logs&source=S&filters=F&limit=N` | Log panel: `syslog` (filters match OpenWrt service tag `name[pid]:` — e.g. babel-monitord,babeld_wrapper,babel_monitor,uhttpd,netifd,dropbear,procd,update-time,dnsmasq,arednlink), `dumps`, `lqm`, `dmesg` |
+| `?api=logs&source=S&filters=F&limit=N` | Log panel: `syslog` (filters match OpenWrt service tag `name[pid]:` — e.g. babel-monitord,babeld_wrapper,babel_monitor,uhttpd,netifd,dropbear,procd,update-time,dnsmasq,arednlink), `dumps`, `lqm`, `dmesg`, `apks` (same package list as `?api=apks`) |
 | `?api=download&source=S` | Full raw download (no filters/tail): `syslog`, `lqm`, `dmesg`, `dumps` — streamed attachment named `{hostname}-{source}-yyyymmdd.ext` |
 | `?api=syslog&limit=N&filters=F` | Alias of logs source=syslog |
+| `?api=apks` | Installed APK inventory from `/lib/apk/db/installed` (sorted by name; not stored in the ring): `count`, `packages[]` with `name`, `version`, `arch`, `size` (installed bytes), `description`, `license`, `origin`, `installed` (unix time when present) |
 | `?api=top` | One-shot `top -bn1` process table (not stored in the ring) |
 
 Optional `compress=1|0|on|off` (default from UCI; gzip level 1 when body ≥ `compress_min_bytes` and client sends `Accept-Encoding: gzip`).
 
 Gap-tolerant: HTTP 200 when the daemon is up; responses include `truncated`, `gap_before`, `next_seq`, `complete`, `boot_id`. No per-poller state on the node.
 
-`api_version` is the stable pull-API contract for central servers (also on `live.meta` / CLI status). Bump it when clients must change how they talk to a node; do not conflate with `schema_version` (in-RAM sample layout) or `package_version` (APK). Current value: **2**.
+`api_version` is the stable pull-API contract for central servers (also on `live.meta` / CLI status). Bump it when clients must change how they talk to a node; do not conflate with `schema_version` (in-RAM sample layout) or `package_version` (APK). Current value: **3**.
 
 ### Sample host / RF / link fields (schema 9)
 

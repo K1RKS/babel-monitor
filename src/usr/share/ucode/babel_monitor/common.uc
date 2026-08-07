@@ -5,7 +5,7 @@ import * as math from "math";
 
 export function packageVersion()
 {
-    return "0.1.66-r0";
+    return "0.1.69-r0";
 };
 
 /**
@@ -13,7 +13,7 @@ export function packageVersion()
  * Bump when endpoints, query params, or response fields change in a way
  * that clients must adapt (independent of SCHEMA_VERSION / packageVersion).
  */
-export const API_VERSION = 2;
+export const API_VERSION = 3;
 export const SCHEMA_VERSION = 9;
 export const SOCK_PATH = "/var/run/babel-monitor.sock";
 export const RUN_DIR = "/var/run/babel-monitor";

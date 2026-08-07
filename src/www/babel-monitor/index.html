@@ -101,7 +101,8 @@
   #logControls[hidden],
   #histToolbar[hidden],
   #syslogFilters[hidden],
-  #logSourceMeta[hidden] {
+  #logSourceMeta[hidden],
+  #apkInstalledOnlyWrap[hidden] {
     display: none !important;
   }
   .tabs.metric { margin-bottom: 10px; }
@@ -169,7 +170,22 @@
     cursor: help;
     user-select: text;
   }
-  #logSourceMeta[hidden] {
+  #apkInstalledOnlyWrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 10px;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+  #apkInstalledOnlyWrap input {
+    margin: 0;
+    cursor: pointer;
+  }
+  #logSourceMeta[hidden],
+  #apkInstalledOnlyWrap[hidden] {
     display: none !important;
   }
   .tabs button {
@@ -201,6 +217,82 @@
     white-space: pre;
   }
   .syslog-empty { color: var(--muted); }
+  .apk-wrap {
+    margin: 0;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: #1a1d23;
+  }
+  .apk-scroll {
+    height: 280px;
+    overflow: auto;
+  }
+  .apk-table {
+    width: 100%;
+    table-layout: auto;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .apk-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #22262e;
+    color: var(--muted);
+    font-weight: 600;
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .apk-table thead th.apk-sortable {
+    cursor: pointer;
+    user-select: none;
+  }
+  .apk-table thead th.apk-sortable:hover { color: var(--fg); }
+  .apk-table thead th.apk-sorted { color: var(--fg); }
+  .apk-sort-ind {
+    display: inline-block;
+    margin-left: 4px;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--accent);
+    visibility: hidden;
+  }
+  .apk-table thead th.apk-sorted .apk-sort-ind { visibility: visible; }
+  .apk-table tbody td {
+    padding: 6px 10px;
+    border-bottom: 1px solid #2a2f38;
+    vertical-align: top;
+  }
+  .apk-table tbody tr:last-child td { border-bottom: none; }
+  /* Fit-to-content columns; description takes leftover width and wraps */
+  .apk-table .apk-name,
+  .apk-table .apk-ver,
+  .apk-table .apk-arch,
+  .apk-table .apk-size,
+  .apk-table .apk-installed {
+    width: 1%;
+    white-space: nowrap;
+  }
+  .apk-table .apk-name { font-weight: 600; }
+  .apk-table .apk-ver { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .apk-table .apk-arch { color: var(--muted); }
+  .apk-table .apk-size { color: var(--muted); text-align: right; }
+  .apk-table .apk-installed { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .apk-table .apk-desc {
+    color: var(--fg);
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .apk-table th.apk-size,
+  .apk-table th[data-sort="size"] { text-align: right; }
+  .apk-empty {
+    padding: 16px 12px;
+    color: var(--muted);
+    font-size: 12px;
+  }
   .legend {
     display: flex;
     flex-wrap: wrap;
@@ -392,6 +484,7 @@
       <button type="button" data-source="dumps">Dumps</button>
       <button type="button" data-source="lqm">LQM</button>
       <button type="button" data-source="dmesg">dmesg</button>
+      <button type="button" data-source="apks">Apks</button>
     </div>
     <div class="chart-wrap" id="chartWrap">
       <div class="legend" id="legend"></div>
@@ -408,6 +501,24 @@
     </div>
     <div class="syslog-wrap" id="textWrap" hidden>
       <pre class="syslog-box" id="textBox"><span class="syslog-empty">Loading…</span></pre>
+      <div class="apk-wrap" id="apkWrap" hidden>
+        <div class="apk-scroll" id="apkScroll">
+          <table class="apk-table" id="apkTable" hidden>
+            <thead>
+              <tr>
+                <th class="apk-sortable apk-sorted" data-sort="name" title="Sort by name">Name<span class="apk-sort-ind" aria-hidden="true">▲</span></th>
+                <th class="apk-sortable" data-sort="version" title="Sort by version">Version<span class="apk-sort-ind" aria-hidden="true"></span></th>
+                <th class="apk-sortable" data-sort="arch" title="Sort by arch">Arch<span class="apk-sort-ind" aria-hidden="true"></span></th>
+                <th class="apk-sortable" data-sort="size" title="Sort by size">Size<span class="apk-sort-ind" aria-hidden="true"></span></th>
+                <th class="apk-sortable" data-sort="installed" title="Sort by install time">Installed<span class="apk-sort-ind" aria-hidden="true"></span></th>
+                <th class="apk-sortable" data-sort="description" title="Sort by description">Description<span class="apk-sort-ind" aria-hidden="true"></span></th>
+              </tr>
+            </thead>
+            <tbody id="apkBody"></tbody>
+          </table>
+          <div class="apk-empty" id="apkEmpty">Loading…</div>
+        </div>
+      </div>
     </div>
     <div class="hist-toolbar" id="histToolbar">
       <div class="tabs time" id="timeTabs" role="tablist" aria-label="Time range">
@@ -441,6 +552,10 @@
       <button type="button" id="syslogPauseBtn">Pause</button>
       <button type="button" id="logDownloadBtn" title="Download full source (no filters / no tail)">Download</button>
       <span id="logSourceMeta" hidden></span>
+      <label id="apkInstalledOnlyWrap" hidden title="Hide firmware/default packages that have no install timestamp">
+        <input type="checkbox" id="apkInstalledOnly" checked>
+        Only Show Installed
+      </label>
     </div>
   </section>
   <section>
@@ -614,7 +729,11 @@
   let failStreak = 0;
   let syslogPaused = false;
   let textBusy = false;
-  let logSource = "syslog"; /* syslog | dumps | lqm | dmesg */
+  let logSource = "syslog"; /* syslog | dumps | lqm | dmesg | apks */
+  let apkPackages = [];
+  let apkSortKey = "name";
+  let apkSortAsc = true;
+  let apkInstalledOnly = true;
   let overviewDrag = null; /* { startX, startAge, width, moved } */
   let histZoomInited = false;
   const ZOOM_STEPS = [
@@ -689,16 +808,22 @@
   function updateHistoryMode() {
     const text = isTextPanel();
     const logs = isLogs();
+    const apks = logs && logSource === "apks";
     const noRing = retentionSec <= 0;
     const showHistNav = !text && !noRing && isRingHistory();
     $("chartWrap").hidden = text || (noRing && isRingHistory());
     $("textWrap").hidden = !text;
+    $("textBox").hidden = !text || apks;
+    $("apkWrap").hidden = !apks;
     $("histToolbar").hidden = text || noRing;
     $("logSourceTabs").hidden = !logs;
     $("logControls").hidden = !logs;
     $("syslogFilters").hidden = !(logs && logSource === "syslog");
     $("syslogPauseBtn").hidden = !(logs && logSource === "syslog");
-    if (!(logs && (logSource === "lqm" || logSource === "dumps"))) {
+    $("logDownloadBtn").hidden = !!(logs && logSource === "apks");
+    const apkOnlyWrap = $("apkInstalledOnlyWrap");
+    if (apkOnlyWrap) apkOnlyWrap.hidden = !apks;
+    if (!(logs && (logSource === "lqm" || logSource === "dumps" || logSource === "apks"))) {
       const meta = $("logSourceMeta");
       if (meta) {
         meta.hidden = true;
@@ -1135,6 +1260,19 @@
   function renderLogSourceMeta(data) {
     const el = $("logSourceMeta");
     if (!el) return;
+    if (logSource === "apks") {
+      const total = apkPackages.length;
+      const shown = filteredApkPackages().length;
+      if (apkInstalledOnly && shown !== total) {
+        el.textContent = shown + " of " + total + " package" + (total === 1 ? "" : "s");
+      } else {
+        el.textContent = shown + " package" + (shown === 1 ? "" : "s");
+      }
+      el.title = "Installed APKs from /lib/apk/db/installed"
+        + (apkInstalledOnly ? " (hiding packages with no install timestamp)" : "");
+      el.hidden = false;
+      return;
+    }
     const show = logSource === "lqm" || logSource === "dumps";
     if (!show) {
       el.hidden = true;
@@ -1164,10 +1302,160 @@
     box.scrollTop = stickBottom ? box.scrollHeight : 0;
   }
 
+  function fmtApkSize(bytes) {
+    if (bytes == null || bytes !== bytes || bytes < 0) return "—";
+    const n = Number(bytes);
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) {
+      const kib = n / 1024;
+      return (kib >= 100 ? Math.round(kib) : kib.toFixed(kib >= 10 ? 0 : 1)) + " KiB";
+    }
+    const mib = n / (1024 * 1024);
+    return (mib >= 10 ? mib.toFixed(1) : mib.toFixed(2)) + " MiB";
+  }
+
+  function fmtApkInstalled(sec) {
+    if (sec == null || sec === "" || sec !== sec) return "—";
+    return formatTime(sec);
+  }
+
+  function apkSortValue(p, key) {
+    if (key === "size" || key === "installed") {
+      if (!p || p[key] == null || p[key] === "") return null;
+      const n = Number(p[key]);
+      return isNaN(n) ? null : n;
+    }
+    const s = p && p[key] != null ? String(p[key]) : "";
+    return s.toLowerCase();
+  }
+
+  function compareApkRows(a, b, key, asc) {
+    const va = apkSortValue(a, key);
+    const vb = apkSortValue(b, key);
+    const aNull = va == null || va === "";
+    const bNull = vb == null || vb === "";
+    let cmp = 0;
+    if (aNull && bNull) cmp = 0;
+    else if (aNull) cmp = 1;
+    else if (bNull) cmp = -1;
+    else if (typeof va === "number" && typeof vb === "number") cmp = va - vb;
+    else if (va < vb) cmp = -1;
+    else if (va > vb) cmp = 1;
+    if (cmp === 0 && key !== "name") {
+      const na = String((a && a.name) || "").toLowerCase();
+      const nb = String((b && b.name) || "").toLowerCase();
+      if (na < nb) cmp = -1;
+      else if (na > nb) cmp = 1;
+    }
+    return asc ? cmp : -cmp;
+  }
+
+  function apkHasInstalledDate(p) {
+    if (!p || p.installed == null || p.installed === "") return false;
+    const n = Number(p.installed);
+    return !isNaN(n);
+  }
+
+  function filteredApkPackages() {
+    if (!apkInstalledOnly) return apkPackages.slice();
+    return apkPackages.filter(apkHasInstalledDate);
+  }
+
+  function sortedApkPackages() {
+    const rows = filteredApkPackages();
+    rows.sort(function (a, b) {
+      return compareApkRows(a, b, apkSortKey, apkSortAsc);
+    });
+    return rows;
+  }
+
+  function syncApkSortHeaders() {
+    const table = $("apkTable");
+    if (!table) return;
+    const ind = apkSortAsc ? "▲" : "▼";
+    [].forEach.call(table.querySelectorAll("thead th[data-sort]"), function (th) {
+      const key = th.getAttribute("data-sort");
+      const active = key === apkSortKey;
+      th.classList.toggle("apk-sorted", active);
+      th.setAttribute("aria-sort", active ? (apkSortAsc ? "ascending" : "descending") : "none");
+      const mark = th.querySelector(".apk-sort-ind");
+      if (mark) mark.textContent = active ? ind : "";
+    });
+  }
+
+  function renderApkTable(packages) {
+    if (packages) apkPackages = packages;
+    const table = $("apkTable");
+    const body = $("apkBody");
+    const empty = $("apkEmpty");
+    const scroll = $("apkScroll");
+    const keepTop = scroll ? scroll.scrollTop : 0;
+    const only = $("apkInstalledOnly");
+    if (only) only.checked = apkInstalledOnly;
+    body.textContent = "";
+    syncApkSortHeaders();
+    renderLogSourceMeta();
+    if (!apkPackages || !apkPackages.length) {
+      table.hidden = true;
+      empty.hidden = false;
+      empty.textContent = "No installed packages";
+      return;
+    }
+    const rows = sortedApkPackages();
+    if (!rows.length) {
+      table.hidden = true;
+      empty.hidden = false;
+      empty.textContent = apkInstalledOnly
+        ? "No packages with an install timestamp"
+        : "No installed packages";
+      return;
+    }
+    empty.hidden = true;
+    table.hidden = false;
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < rows.length; i++) {
+      const p = rows[i] || {};
+      const tr = document.createElement("tr");
+      const cells = [
+        ["apk-name", p.name || "—"],
+        ["apk-ver", p.version || "—"],
+        ["apk-arch", p.arch || "—"],
+        ["apk-size", fmtApkSize(p.size)],
+        ["apk-installed", fmtApkInstalled(p.installed)],
+        ["apk-desc", p.description || ""]
+      ];
+      for (let c = 0; c < cells.length; c++) {
+        const td = document.createElement("td");
+        td.className = cells[c][0];
+        td.textContent = cells[c][1];
+        tr.appendChild(td);
+      }
+      frag.appendChild(tr);
+    }
+    body.appendChild(frag);
+    if (scroll) scroll.scrollTop = keepTop;
+  }
+
+  function setApkSort(key) {
+    if (!key) return;
+    if (apkSortKey === key) apkSortAsc = !apkSortAsc;
+    else {
+      apkSortKey = key;
+      apkSortAsc = true;
+    }
+    renderApkTable();
+  }
+
   async function refreshLogs() {
     if (textBusy) return;
     textBusy = true;
     try {
+      if (logSource === "apks") {
+        const data = await getJsonRetry(API + "?api=apks");
+        renderApkTable(data.packages || []);
+        renderLogSourceMeta(data);
+        return;
+      }
       let url = API + "?api=logs&source=" + encodeURIComponent(logSource);
       if (logSource === "syslog") {
         const filters = selectedLogFilters();
@@ -2435,6 +2723,17 @@
     logSource = b.getAttribute("data-source") || "syslog";
     updateHistoryMode();
     refreshLogsSafe();
+  });
+
+  $("apkTable").addEventListener("click", function (ev) {
+    const th = ev.target.closest("th[data-sort]");
+    if (!th || !$("apkTable").contains(th)) return;
+    setApkSort(th.getAttribute("data-sort"));
+  });
+
+  $("apkInstalledOnly").addEventListener("change", function (ev) {
+    apkInstalledOnly = !!ev.target.checked;
+    renderApkTable();
   });
 
   bindTabGroup("timeTabs", function (b) {

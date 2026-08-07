@@ -253,6 +253,97 @@ function readTopLines()
     return lines;
 }
 
+/** Sort installed APK objects by name (case-sensitive, ascending). */
+function sortApksByName(pkgs)
+{
+    const n = length(pkgs);
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            if (pkgs[j].name < pkgs[i].name) {
+                const tmp = pkgs[i];
+                pkgs[i] = pkgs[j];
+                pkgs[j] = tmp;
+            }
+        }
+    }
+    return pkgs;
+}
+
+/**
+ * Installed APK inventory from /lib/apk/db/installed (not stored in the ring).
+ * Fields: name, version, arch, size (installed bytes), description, license,
+ * origin, installed (unix time when present).
+ */
+function readInstalledApks()
+{
+    const pkgs = [];
+    const raw = fs.readfile("/lib/apk/db/installed");
+    if (!raw || raw === "") {
+        return pkgs;
+    }
+    let cur = null;
+    const lines = split(raw, "\n");
+    for (let i = 0; i < length(lines); i++) {
+        const line = lines[i];
+        if (line === "") {
+            if (cur && cur.name) {
+                push(pkgs, cur);
+            }
+            cur = null;
+            continue;
+        }
+        if (length(line) < 2 || substr(line, 1, 1) !== ":") {
+            continue;
+        }
+        const key = substr(line, 0, 1);
+        const val = substr(line, 2);
+        if (key === "P") {
+            if (cur && cur.name) {
+                push(pkgs, cur);
+            }
+            cur = {
+                name: val,
+                version: "",
+                arch: "",
+                size: null,
+                description: "",
+                license: "",
+                origin: "",
+                installed: null
+            };
+            continue;
+        }
+        if (!cur) {
+            continue;
+        }
+        if (key === "V") {
+            cur.version = val;
+        }
+        else if (key === "A") {
+            cur.arch = val;
+        }
+        else if (key === "I") {
+            cur.size = int(val);
+        }
+        else if (key === "T") {
+            cur.description = val;
+        }
+        else if (key === "L") {
+            cur.license = val;
+        }
+        else if (key === "o") {
+            cur.origin = val;
+        }
+        else if (key === "t") {
+            cur.installed = int(val);
+        }
+    }
+    if (cur && cur.name) {
+        push(pkgs, cur);
+    }
+    return sortApksByName(pkgs);
+}
+
 function readMemAvailableKb()
 {
     const raw = fs.readfile("/proc/meminfo");
@@ -463,7 +554,24 @@ function handleRequest(line)
                 lines: readDmesgLines(limit)
             };
         }
+        if (source === "apks") {
+            const packages = readInstalledApks();
+            return {
+                boot_id: store.boot_id,
+                source: "apks",
+                count: length(packages),
+                packages: packages
+            };
+        }
         return { error: "unknown logs source", source: source };
+    }
+    if (cmd === "apks") {
+        const packages = readInstalledApks();
+        return {
+            boot_id: store.boot_id,
+            count: length(packages),
+            packages: packages
+        };
     }
     if (cmd === "top") {
         return {
