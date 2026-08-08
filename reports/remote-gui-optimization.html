@@ -141,18 +141,18 @@
     <span class="pill accent">branch: remote_gui_optimization</span>
     <span class="pill">client-first</span>
     <span class="pill">reuse series + sync</span>
-    <span class="pill warn">todos pending</span>
+    <span class="pill ok">implemented 0.1.82</span>
   </div>
 
   <h2>Todos</h2>
   <ul class="todo-list">
-    <li><span class="status">pending</span><span class="id">client-cache</span><span>Add seq-keyed sample cache, boot_id invalidation, retention trim, derive series from window</span></li>
-    <li><span class="status">pending</span><span class="id">gap-sync-fetch</span><span>Gap-only series fetch (parallel 3) + live tip via api=sync; abort on view change; skip tick fetch when panned+cached</span></li>
-    <li><span class="status">pending</span><span class="id">loading-spinner</span><span>Animated awaiting icon between title and Setup; progressive draw from cache</span></li>
-    <li><span class="status">pending</span><span class="id">bg-update</span><span>Background update checkbox (default off, localStorage); idle older-slice fill</span></li>
-    <li><span class="status">pending</span><span class="id">bandwidth-header</span><span>60s rolling sent/recv next to uptime; title tooltip for boot_id + version; strip from identity line</span></li>
-    <li><span class="status">pending</span><span class="id">events-incr</span><span>Incremental api=events since_seq</span></li>
-    <li><span class="status">pending</span><span class="id">version-verify</span><span>Bump package version/README; read-only speed verify on brett-5ac (kg7gdb-pb-5ac-400-qth.local.mesh)</span></li>
+    <li><span class="status" style="color:var(--ok)">done</span><span class="id">client-cache</span><span>Add seq-keyed sample cache, boot_id invalidation, retention trim, derive series from window</span></li>
+    <li><span class="status" style="color:var(--ok)">done</span><span class="id">gap-sync-fetch</span><span>Gap-only series fetch (parallel 3) + live tip via api=sync; abort on view change; skip tick fetch when panned+cached</span></li>
+    <li><span class="status" style="color:var(--ok)">done</span><span class="id">loading-spinner</span><span>Animated awaiting icon between title and Setup; progressive draw from cache</span></li>
+    <li><span class="status" style="color:var(--ok)">done</span><span class="id">bg-update</span><span>Background update checkbox (default off, localStorage); idle older-slice fill</span></li>
+    <li><span class="status" style="color:var(--ok)">done</span><span class="id">bandwidth-header</span><span>60s rolling sent/recv next to uptime; title tooltip for boot_id + version; strip from identity line</span></li>
+    <li><span class="status" style="color:var(--ok)">done</span><span class="id">events-incr</span><span>Incremental api=events since_seq</span></li>
+    <li><span class="status" style="color:var(--ok)">done</span><span class="id">version-verify</span><span>Bump package version/README; read-only speed verify on brett-5ac (kg7gdb-pb-5ac-400-qth.local.mesh)</span></li>
   </ul>
 
   <h2>Problem (current behavior)</h2>
@@ -318,6 +318,15 @@
     <li>Background update off vs on — network quiet vs slow older fill when idle.</li>
     <li>Bandwidth numbers move under load; title tooltip shows boot/version.</li>
     <li>boot/restart daemon — cache clears on new <code>boot_id</code> (use a local/dev node for destructive checks, not brett-5ac).</li>
+  </ul>
+
+  <h3>Read-only baseline (brett-5ac, from client mesh path)</h3>
+  <ul>
+    <li>Node package at check: <code>0.1.75-r0</code>, ring <code>4h</code> full (1440/1440).</li>
+    <li><code>api=series&amp;seconds=300</code> ≈ 0.9s / ~27KB.</li>
+    <li>Estimated sequential 4h (48 slices) ≈ 42s; parallel-3 first fill ≈ 14s.</li>
+    <li>Live tip <code>api=sync</code> ≈ 0.6s / ~2.5KB once cached.</li>
+    <li>Built/installed <code>0.1.81-r0</code> on <code>k1rks-x86-development</code> for UI functional check (not on brett-5ac).</li>
   </ul>
 
   <footer>

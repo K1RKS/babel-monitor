@@ -31,7 +31,26 @@
     gap: 10px 14px;
     align-items: center;
   }
-  header h1 { margin: 0; font-size: 1.15rem; font-weight: 600; }
+  header h1 { margin: 0; font-size: 1.15rem; font-weight: 600; cursor: help; }
+  header .hist-busy {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--line);
+    border-radius: 50%;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+  }
+  header .hist-busy.idle {
+    border-color: var(--line);
+    background: transparent;
+    animation: none;
+  }
+  header .hist-busy.active {
+    border-color: var(--line);
+    border-top-color: var(--accent);
+    animation: hist-spin 0.7s linear infinite;
+  }
+  @keyframes hist-spin { to { transform: rotate(360deg); } }
   header .setup-btn {
     background: transparent;
     border: 1px solid var(--line);
@@ -42,7 +61,26 @@
     cursor: pointer;
   }
   header .setup-btn:hover { border-color: var(--accent); color: var(--accent); }
+  header .bg-update {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    user-select: none;
+    cursor: pointer;
+  }
+  header .bg-update input { margin: 0; cursor: pointer; }
   header .meta { color: var(--muted); font-size: 12px; flex: 1 1 auto; }
+  header .meta #bwMeter { color: var(--fg); cursor: help; white-space: nowrap; }
+  header .meta #bwSpark {
+    display: inline-block;
+    vertical-align: -3px;
+    margin-left: 6px;
+    width: 72px;
+    height: 14px;
+    cursor: help;
+  }
   main { padding: 14px 18px 28px; max-width: 1100px; }
   .row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
   .kpi {
@@ -506,8 +544,13 @@
 </head>
 <body>
 <header>
-  <h1>babel-monitor</h1>
+  <h1 id="pageTitle" title="babel-monitor">babel-monitor</h1>
+  <span class="hist-busy idle" id="histBusy" title="History idle" aria-label="History idle" aria-busy="false"></span>
   <button type="button" class="setup-btn" id="setupBtn" title="Sample ring setup (admin)">Setup</button>
+  <label class="bg-update" title="When on, slowly fill the browser cache with the rest of the ring while idle">
+    <input type="checkbox" id="bgUpdateChk">
+    Background update
+  </label>
   <div class="meta" id="identity">connecting…</div>
 </header>
 <div class="err" id="err" hidden></div>
@@ -876,6 +919,37 @@
     60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400
   ]; /* 1m 2m 5m 10m 15m 30m 1h 2h 4h 6h 12h 24h — minute-aligned, integer tick counts */
   const ZOOM_LS_KEY = "babel-monitor-window-sec";
+  const BG_LS_KEY = "babel-monitor-bg-update";
+  const SERIES_SLICE = 300; /* match server SERIES_SLICE_S */
+  const GAP_CONCURRENCY = 3;
+  const BW_WINDOW_MS = 60000; /* text meter: 60s rolling totals */
+  const BW_SPARK_MS = 300000; /* sparkline: last 5 minutes */
+  const BW_SPARK_BINS = 60; /* 5s bins over 5m */
+  const BG_IDLE_MS = 2500;
+  const BG_SLICE_MS = 2000;
+
+  /* Client-side sample ring (seq-keyed); fills on demand / background */
+  let sampleCache = Object.create(null);
+  let cacheSeqs = [];
+  let fetchedSlices = Object.create(null); /* "t0:t1" absolute cover keys */
+  let cacheBootId = null;
+  let sampleCap = 0;
+  let sampleInterval = 10;
+  let ensureGen = 0;
+  let seriesAbort = null;
+  let historyBusy = 0;
+  let bgUpdateOn = false;
+  let lastUserHistAt = 0;
+  let bgFillBusy = false;
+  let eventList = [];
+  let eventSinceSeq = 0;
+  let eventBootId = null;
+  let bwEvents = []; /* { t, sent, recv } */
+  let pkgVersion = "";
+  let bootIdDisplay = "";
+  let identityHost = "";
+  let identityNode = "";
+  let identityUptime = "—";
   let logFilterAll = true;
   const logFilterOn = {
     "babel-monitord": false,
@@ -1142,6 +1216,8 @@
   function applyRingMeta(m) {
     if (!m) return;
     if (m.ring_size) ringSize = m.ring_size;
+    if (m.sample_cap != null) sampleCap = Number(m.sample_cap) || 0;
+    if (m.sample_interval != null) sampleInterval = Number(m.sample_interval) || 10;
     if (m.retention_s != null) retentionSec = Number(m.retention_s) || 0;
     else if (m.sample_cap != null && m.sample_interval != null) {
       retentionSec = Number(m.sample_cap) * Number(m.sample_interval);
@@ -1150,6 +1226,502 @@
     syncMetricTabEnable();
     syncTimeTabEnable();
     syncHistControls();
+  }
+
+  function noteUserHistAction() {
+    lastUserHistAt = Date.now();
+  }
+
+  function setHistoryBusy(delta) {
+    historyBusy = Math.max(0, historyBusy + delta);
+    const el = $("histBusy");
+    if (!el) return;
+    const active = historyBusy > 0;
+    el.classList.toggle("active", active);
+    el.classList.toggle("idle", !active);
+    el.title = active ? "Loading history data…" : "History idle";
+    el.setAttribute("aria-label", active ? "Loading history" : "History idle");
+    el.setAttribute("aria-busy", active ? "true" : "false");
+  }
+
+  function fmtBytes(n) {
+    n = Math.max(0, Number(n) || 0);
+    if (n < 1024) return n.toFixed(0) + "B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + "KB";
+    return (n / (1024 * 1024)).toFixed(1) + "MB";
+  }
+
+  function pruneBw(now) {
+    const cut = (now || Date.now()) - BW_SPARK_MS;
+    while (bwEvents.length && bwEvents[0].t < cut) bwEvents.shift();
+  }
+
+  function noteBw(sent, recv) {
+    const now = Date.now();
+    bwEvents.push({ t: now, sent: sent || 0, recv: recv || 0 });
+    pruneBw(now);
+    renderIdentityLine();
+  }
+
+  function bwTotals(windowMs) {
+    const now = Date.now();
+    pruneBw(now);
+    const cut = now - (windowMs || BW_WINDOW_MS);
+    let s = 0;
+    let r = 0;
+    for (let i = 0; i < bwEvents.length; i++) {
+      if (bwEvents[i].t < cut) continue;
+      s += bwEvents[i].sent;
+      r += bwEvents[i].recv;
+    }
+    return { sent: s, recv: r };
+  }
+
+  function bwSparkBins(now) {
+    now = now || Date.now();
+    const binMs = BW_SPARK_MS / BW_SPARK_BINS;
+    const sent = new Array(BW_SPARK_BINS);
+    const recv = new Array(BW_SPARK_BINS);
+    for (let i = 0; i < BW_SPARK_BINS; i++) {
+      sent[i] = 0;
+      recv[i] = 0;
+    }
+    const start = now - BW_SPARK_MS;
+    for (let i = 0; i < bwEvents.length; i++) {
+      const e = bwEvents[i];
+      if (e.t < start) continue;
+      let idx = Math.floor((e.t - start) / binMs);
+      if (idx < 0) idx = 0;
+      if (idx >= BW_SPARK_BINS) idx = BW_SPARK_BINS - 1;
+      sent[idx] += e.sent;
+      recv[idx] += e.recv;
+    }
+    return { sent: sent, recv: recv };
+  }
+
+  function drawBwSpark() {
+    const c = $("bwSpark");
+    if (!c || !c.getContext) return;
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = 72;
+    const cssH = 14;
+    const w = Math.round(cssW * dpr);
+    const h = Math.round(cssH * dpr);
+    if (c.width !== w || c.height !== h) {
+      c.width = w;
+      c.height = h;
+      c.style.width = cssW + "px";
+      c.style.height = cssH + "px";
+    }
+    const ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#1a1d23";
+    ctx.fillRect(0, 0, w, h);
+    const bins = bwSparkBins(Date.now());
+    let peak = 1;
+    for (let i = 0; i < BW_SPARK_BINS; i++) {
+      const v = bins.sent[i] + bins.recv[i];
+      if (v > peak) peak = v;
+    }
+    /* Soften spikes so quiet periods stay visible */
+    const scale = Math.log10(peak + 1);
+    const barW = w / BW_SPARK_BINS;
+    for (let i = 0; i < BW_SPARK_BINS; i++) {
+      const s = bins.sent[i];
+      const r = bins.recv[i];
+      const tot = s + r;
+      if (tot <= 0) continue;
+      const th = Math.max(dpr, (Math.log10(tot + 1) / scale) * (h - dpr));
+      const rh = tot > 0 ? (r / tot) * th : 0;
+      const sh = th - rh;
+      const x = i * barW;
+      const y = h - th;
+      if (rh > 0) {
+        ctx.fillStyle = "#5b9fd4";
+        ctx.fillRect(x, y, Math.max(dpr, barW - dpr * 0.25), rh);
+      }
+      if (sh > 0) {
+        ctx.fillStyle = "#e0a458";
+        ctx.fillRect(x, y + rh, Math.max(dpr, barW - dpr * 0.25), sh);
+      }
+    }
+    ctx.strokeStyle = "#3a424d";
+    ctx.lineWidth = dpr;
+    ctx.strokeRect(0.5 * dpr, 0.5 * dpr, w - dpr, h - dpr);
+  }
+
+  function updateTitleTooltip() {
+    const el = $("pageTitle");
+    if (!el) return;
+    const parts = ["babel-monitor"];
+    if (pkgVersion) parts.push("version " + pkgVersion);
+    if (bootIdDisplay) parts.push("boot " + bootIdDisplay);
+    el.title = parts.join(" · ");
+  }
+
+  function renderIdentityLine() {
+    const el = $("identity");
+    if (!el) return;
+    if (!identityHost && el.textContent === "connecting…") return;
+    const bw = bwTotals(BW_WINDOW_MS);
+    const tip =
+      "Bytes exchanged with this node in the last 60 seconds.\n" +
+      "Left = sent (requests), right = received (responses).";
+    const sparkTip =
+      "This browser tab’s traffic over the last 5 minutes.\n" +
+      "Blue = received, amber = sent (log-scaled).";
+    el.innerHTML =
+      escText(identityHost || "?") + " · " + escText(identityNode || "?") +
+      " · Uptime " + escText(identityUptime) +
+      ' · <span id="bwMeter" title="' + escAttr(tip) + '">' +
+      escText(fmtBytes(bw.sent) + "/" + fmtBytes(bw.recv)) + "</span>" +
+      '<canvas id="bwSpark" width="72" height="14" title="' + escAttr(sparkTip) +
+      '" aria-label="Traffic sparkline last 5 minutes"></canvas>';
+    drawBwSpark();
+  }
+
+  function clearSampleCache() {
+    sampleCache = Object.create(null);
+    cacheSeqs = [];
+    fetchedSlices = Object.create(null);
+  }
+
+  function noteBootId(bootId) {
+    if (!bootId) return;
+    if (cacheBootId && cacheBootId !== bootId) {
+      clearSampleCache();
+      eventList = [];
+      eventSinceSeq = 0;
+      eventBootId = null;
+    }
+    cacheBootId = bootId;
+    bootIdDisplay = bootId;
+    updateTitleTooltip();
+  }
+
+  function coverKey(t0, t1) {
+    /* Quantize to slice walls so live clock drift does not invalidate coverage */
+    const a = Math.floor(Number(t0) / SERIES_SLICE) * SERIES_SLICE;
+    const b = Math.ceil(Number(t1) / SERIES_SLICE) * SERIES_SLICE;
+    return a + ":" + b;
+  }
+
+  function ingestSamples(samples) {
+    if (!samples || !samples.length) return 0;
+    let added = 0;
+    for (let i = 0; i < samples.length; i++) {
+      const s = samples[i];
+      if (!s || s.seq == null) continue;
+      const seq = s.seq;
+      if (!sampleCache[seq]) {
+        cacheSeqs.push(seq);
+        added++;
+      }
+      sampleCache[seq] = s;
+    }
+    if (added) {
+      cacheSeqs.sort(function (a, b) { return a - b; });
+      const dedup = [];
+      let last = -1;
+      for (let i = 0; i < cacheSeqs.length; i++) {
+        if (cacheSeqs[i] === last) continue;
+        dedup.push(cacheSeqs[i]);
+        last = cacheSeqs[i];
+      }
+      cacheSeqs = dedup;
+    }
+    return added;
+  }
+
+  function trimSampleCache() {
+    const now = nowUnix();
+    const oldest = retentionSec > 0 ? now - retentionSec - 120 : 0;
+    const maxKeep = sampleCap > 0 ? sampleCap + 64 : 9000;
+    const keep = [];
+    for (let i = 0; i < cacheSeqs.length; i++) {
+      const seq = cacheSeqs[i];
+      const s = sampleCache[seq];
+      if (!s) continue;
+      if (oldest > 0 && Number(s.t) < oldest) {
+        delete sampleCache[seq];
+        continue;
+      }
+      keep.push(seq);
+    }
+    while (keep.length > maxKeep) {
+      delete sampleCache[keep.shift()];
+    }
+    cacheSeqs = keep;
+    /* Drop cover marks that are fully older than retention */
+    if (oldest > 0) {
+      for (const k in fetchedSlices) {
+        if (!Object.prototype.hasOwnProperty.call(fetchedSlices, k)) continue;
+        const parts = k.split(":");
+        const t1 = Number(parts[1]);
+        if (t1 < oldest) delete fetchedSlices[k];
+      }
+    }
+  }
+
+  function maxCachedSeq() {
+    if (!cacheSeqs.length) return 0;
+    return cacheSeqs[cacheSeqs.length - 1];
+  }
+
+  function seriesFromCache(t0, tEnd) {
+    const out = [];
+    for (let i = 0; i < cacheSeqs.length; i++) {
+      const s = sampleCache[cacheSeqs[i]];
+      if (!s) continue;
+      const t = Number(s.t);
+      if (t >= t0 && t <= tEnd) out.push(s);
+    }
+    return out;
+  }
+
+  function countSamplesInRange(t0, t1) {
+    let n = 0;
+    for (let i = 0; i < cacheSeqs.length; i++) {
+      const s = sampleCache[cacheSeqs[i]];
+      if (!s) continue;
+      const t = Number(s.t);
+      if (t >= t0 && t <= t1) n++;
+    }
+    return n;
+  }
+
+  function neededSlices(vw) {
+    const slice = SERIES_SLICE;
+    const want = vw.windowSec;
+    const baseEnd = vw.endAge;
+    const now = vw.now;
+    const out = [];
+    if (want <= slice) {
+      out.push({
+        seconds: want,
+        end_age: baseEnd,
+        t0: now - baseEnd - want,
+        t1: now - baseEnd
+      });
+      return out;
+    }
+    for (let endAge = baseEnd + want - slice; endAge >= baseEnd; endAge -= slice) {
+      const sec = Math.min(slice, baseEnd + want - endAge);
+      out.push({
+        seconds: sec,
+        end_age: endAge,
+        t0: now - endAge - sec,
+        t1: now - endAge
+      });
+    }
+    return out;
+  }
+
+  function sliceIsCovered(sl) {
+    const key = coverKey(sl.t0, sl.t1);
+    if (fetchedSlices[key]) return true;
+    /* Live tip: recent sync/sample means the near-now slice does not need re-pull */
+    if (isLiveView() && sl.t1 >= nowUnix() - 120) {
+      const newest = cacheSeqs.length ? sampleCache[cacheSeqs[cacheSeqs.length - 1]] : null;
+      if (newest && Number(newest.t) >= nowUnix() - Math.max(45, sampleInterval * 4)) {
+        return true;
+      }
+    }
+    const interval = Math.max(5, sampleInterval || 10);
+    const expect = Math.max(1, Math.floor(sl.seconds / interval) - 1);
+    const have = countSamplesInRange(sl.t0, sl.t1);
+    if (have >= Math.max(1, Math.floor(expect * 0.45))) {
+      fetchedSlices[key] = true;
+      return true;
+    }
+    return false;
+  }
+
+  function windowGaps(vw) {
+    const slices = neededSlices(vw);
+    const gaps = [];
+    for (let i = 0; i < slices.length; i++) {
+      if (!sliceIsCovered(slices[i])) gaps.push(slices[i]);
+    }
+    return gaps;
+  }
+
+  function applySeriesFromCache() {
+    if (skipsSeriesChart() || !(windowSec > 0)) {
+      series = [];
+      drawOverview();
+      return;
+    }
+    const vw = computeViewWindow();
+    series = seriesFromCache(vw.t0, vw.tEnd);
+    if (hoverIdx >= series.length) {
+      hoverIdx = series.length ? series.length - 1 : -1;
+      if (hoverIdx < 0) hideTip();
+    }
+    drawChart();
+    drawOverview();
+    syncHistControls();
+  }
+
+  async function mapPool(items, limit, fn) {
+    if (!items.length) return [];
+    const results = new Array(items.length);
+    let ix = 0;
+    async function worker() {
+      while (ix < items.length) {
+        const i = ix++;
+        results[i] = await fn(items[i], i);
+      }
+    }
+    const n = Math.min(limit, items.length);
+    const workers = [];
+    for (let i = 0; i < n; i++) workers.push(worker());
+    await Promise.all(workers);
+    return results;
+  }
+
+  async function fetchSeriesSlice(sl, signal) {
+    const url = API + "?api=series&seconds=" + sl.seconds + "&end_age=" + sl.end_age;
+    const data = await getJsonRetry(url, 2, signal);
+    noteBootId(data.boot_id);
+    ingestSamples(data.samples || []);
+    fetchedSlices[coverKey(sl.t0, sl.t1)] = true;
+    return data;
+  }
+
+  async function syncLiveTip(signal) {
+    if (!isLiveView()) return;
+    const since = maxCachedSeq();
+    const data = await getJsonRetry(
+      API + "?api=sync&since_seq=" + since + "&limit=200",
+      2,
+      signal
+    );
+    noteBootId(data.boot_id);
+    if (data.gap_before) {
+      const now = nowUnix();
+      for (const k in fetchedSlices) {
+        if (!Object.prototype.hasOwnProperty.call(fetchedSlices, k)) continue;
+        const parts = k.split(":");
+        const t1 = Number(parts[1]);
+        if (t1 >= now - SERIES_SLICE * 2) delete fetchedSlices[k];
+      }
+    }
+    ingestSamples(data.samples || []);
+    trimSampleCache();
+  }
+
+  /**
+   * Ensure visible window is in the client cache; live tip uses api=sync.
+   * Draws from cache immediately, then fills gaps (parallel).
+   */
+  async function ensureVisibleCached(opts) {
+    opts = opts || {};
+    if (skipsSeriesChart()) {
+      series = [];
+      drawOverview();
+      return;
+    }
+    if (!(windowSec > 0)) {
+      series = [];
+      drawOverview();
+      return;
+    }
+    viewEndAgeSec = clampViewEndAge(viewEndAgeSec);
+    const vw = computeViewWindow();
+    if (!isLiveView()) viewEndAgeSec = vw.endAge;
+
+    applySeriesFromCache();
+
+    const gaps = windowGaps(vw);
+    const needTip = isLiveView() && !!opts.allowSync;
+    if (!gaps.length && !needTip) return;
+    /* Historical view fully cached: nothing to fetch */
+    if (!gaps.length && !isLiveView()) return;
+
+    ensureGen++;
+    const gen = ensureGen;
+    if (seriesAbort) {
+      try { seriesAbort.abort(); } catch (e) { /* ignore */ }
+    }
+    seriesAbort = new AbortController();
+    const signal = seriesAbort.signal;
+
+    setHistoryBusy(1);
+    try {
+      if (gaps.length) {
+        await mapPool(gaps, GAP_CONCURRENCY, function (sl) {
+          if (gen !== ensureGen) return null;
+          return fetchSeriesSlice(sl, signal);
+        });
+        if (gen !== ensureGen) return;
+        trimSampleCache();
+        applySeriesFromCache();
+      }
+      if (needTip && gen === ensureGen && isLiveView()) {
+        await syncLiveTip(signal);
+        if (gen !== ensureGen) return;
+        applySeriesFromCache();
+      }
+    } finally {
+      setHistoryBusy(-1);
+    }
+  }
+
+  function nextBgSlice() {
+    if (!bgUpdateOn || retentionSec <= 0) return null;
+    const now = nowUnix();
+    const oldest = Math.max(0, now - retentionSec);
+    for (let t1 = oldest + SERIES_SLICE; t1 <= now + 1; t1 += SERIES_SLICE) {
+      const t0 = Math.max(oldest, t1 - SERIES_SLICE);
+      const sec = Math.max(1, t1 - t0);
+      const sl = {
+        seconds: Math.min(SERIES_SLICE, sec),
+        end_age: Math.max(0, now - t1),
+        t0: t0,
+        t1: t1
+      };
+      if (!sliceIsCovered(sl)) return sl;
+    }
+    return null;
+  }
+
+  async function bgFillTick() {
+    if (!bgUpdateOn || bgFillBusy || historyBusy > 0 || tickBusy) return;
+    if (Date.now() - lastUserHistAt < BG_IDLE_MS) return;
+    if (skipsSeriesChart() || retentionSec <= 0) return;
+    const sl = nextBgSlice();
+    if (!sl) return;
+    bgFillBusy = true;
+    setHistoryBusy(1);
+    try {
+      await fetchSeriesSlice(sl, null);
+      trimSampleCache();
+      /* Refresh chart if new data falls in view */
+      const vw = computeViewWindow();
+      if (sl.t1 >= vw.t0 && sl.t0 <= vw.tEnd) applySeriesFromCache();
+    } catch (e) {
+      /* background best-effort */
+    } finally {
+      setHistoryBusy(-1);
+      bgFillBusy = false;
+    }
+  }
+
+  function loadBgUpdatePref() {
+    try {
+      bgUpdateOn = localStorage.getItem(BG_LS_KEY) === "1";
+    } catch (e) {
+      bgUpdateOn = false;
+    }
+    const chk = $("bgUpdateChk");
+    if (chk) chk.checked = bgUpdateOn;
+  }
+
+  function saveBgUpdatePref() {
+    try {
+      localStorage.setItem(BG_LS_KEY, bgUpdateOn ? "1" : "0");
+    } catch (e) { /* ignore */ }
   }
 
   function syncMetricTabEnable() {
@@ -1893,19 +2465,24 @@
     return new Promise(function (resolve) { setTimeout(resolve, ms); });
   }
 
-  async function getJson(url) {
-    const r = await fetch(url, { cache: "no-store" });
+  async function getJson(url, signal) {
+    const sentApprox = typeof url === "string" ? url.length : 64;
+    const r = await fetch(url, { cache: "no-store", signal: signal || undefined });
     if (!r.ok) throw new Error("HTTP " + r.status);
-    return r.json();
+    const buf = await r.arrayBuffer();
+    noteBw(sentApprox, buf.byteLength);
+    const text = new TextDecoder("utf-8").decode(buf);
+    return JSON.parse(text);
   }
 
-  async function getJsonRetry(url, tries) {
+  async function getJsonRetry(url, tries, signal) {
     tries = tries || 2;
     let last = null;
     for (let i = 0; i < tries; i++) {
       try {
-        return await getJson(url);
+        return await getJson(url, signal);
       } catch (e) {
+        if (e && e.name === "AbortError") throw e;
         last = e;
         if (i + 1 < tries) await sleep(350);
       }
@@ -1957,12 +2534,16 @@
     if (m.mem_total_kb != null) {
       memTotalKb = Number(m.mem_total_kb);
     }
+    if (m.package_version) {
+      pkgVersion = m.package_version;
+      updateTitleTooltip();
+    }
+    noteBootId(m.boot_id);
     applyRingMeta(m);
-    $("identity").textContent =
-      (m.hostname || "?") + " · " + (m.node_id || "?") +
-      " · boot " + (m.boot_id || "?") +
-      " · " + (m.package_version || "") +
-      " · Uptime " + fmtUptime(s.uptime_s);
+    identityHost = m.hostname || "?";
+    identityNode = m.node_id || "?";
+    identityUptime = fmtUptime(s.uptime_s);
+    renderIdentityLine();
     document.title = (m.hostname || "?") + " · babel-monitor";
     /* [label, value, title] — titles explain the latest sample */
     const items = [
@@ -2092,6 +2673,30 @@
       return fmtEventTime(e.t) + "  " + (e.type || "?") + "  " + (e.detail || "");
     }).join("\n");
     box.scrollTop = box.scrollHeight;
+  }
+
+  function mergeEvents(incoming) {
+    if (!incoming || !incoming.length) {
+      renderEvents(eventList);
+      return;
+    }
+    const bySeq = Object.create(null);
+    for (let i = 0; i < eventList.length; i++) {
+      const e = eventList[i];
+      if (e && e.seq != null) bySeq[e.seq] = e;
+    }
+    for (let i = 0; i < incoming.length; i++) {
+      const e = incoming[i];
+      if (e && e.seq != null) bySeq[e.seq] = e;
+    }
+    const seqs = Object.keys(bySeq).map(Number).sort(function (a, b) { return a - b; });
+    eventList = [];
+    for (let i = 0; i < seqs.length; i++) eventList.push(bySeq[seqs[i]]);
+    if (eventList.length > 200) eventList = eventList.slice(-200);
+    if (eventList.length) {
+      eventSinceSeq = eventList[eventList.length - 1].seq || eventSinceSeq;
+    }
+    renderEvents(eventList);
   }
 
   const WG_SERVER_FILTER_KEY = "bm_wg_server_enabled_only";
@@ -2994,64 +3599,27 @@
   }
 
   async function refreshEvents() {
-    const data = await getJsonRetry(API + "?api=events&since_seq=0&limit=80");
-    renderEvents(data.events || []);
+    const since = eventSinceSeq || 0;
+    const data = await getJsonRetry(API + "?api=events&since_seq=" + since + "&limit=80");
+    noteBootId(data.boot_id);
+    if (eventBootId && data.boot_id && eventBootId !== data.boot_id) {
+      eventList = [];
+      eventSinceSeq = 0;
+    }
+    eventBootId = data.boot_id || eventBootId;
+    if (data.truncated && since > 0) {
+      /* Event ring wrapped — resync from 0 once */
+      const full = await getJsonRetry(API + "?api=events&since_seq=0&limit=80");
+      eventList = [];
+      eventSinceSeq = 0;
+      mergeEvents(full.events || []);
+      return;
+    }
+    mergeEvents(data.events || []);
   }
 
   async function refreshSeries() {
-    if (skipsSeriesChart()) {
-      series = [];
-      drawOverview();
-      return;
-    }
-    if (!(windowSec > 0)) {
-      series = [];
-      drawOverview();
-      return;
-    }
-    viewEndAgeSec = clampViewEndAge(viewEndAgeSec);
-    const vw = computeViewWindow();
-    /* Keep pan state on the snapped minute so Live/overview stay consistent */
-    if (!isLiveView()) viewEndAgeSec = vw.endAge;
-    const slice = 300; /* match server SERIES_SLICE_S — one expand peak at a time */
-    const want = vw.windowSec;
-    const baseEnd = vw.endAge;
-    let all = [];
-    if (want <= slice) {
-      const data = await getJsonRetry(
-        API + "?api=series&seconds=" + want + "&end_age=" + baseEnd
-      );
-      all = data.samples || [];
-    } else {
-      for (let endAge = baseEnd + want - slice; endAge >= baseEnd; endAge -= slice) {
-        const sec = Math.min(slice, baseEnd + want - endAge);
-        const data = await getJsonRetry(
-          API + "?api=series&seconds=" + sec + "&end_age=" + endAge
-        );
-        const part = data.samples || [];
-        for (let i = 0; i < part.length; i++) all.push(part[i]);
-      }
-      /* Dedupe by seq (slice edges can overlap by one sample) */
-      all.sort(function (a, b) { return (a.seq || 0) - (b.seq || 0); });
-      const dedup = [];
-      let lastSeq = -1;
-      for (let i = 0; i < all.length; i++) {
-        const s = all[i];
-        const seq = s.seq || 0;
-        if (seq === lastSeq) continue;
-        dedup.push(s);
-        lastSeq = seq;
-      }
-      all = dedup;
-    }
-    series = all;
-    if (hoverIdx >= series.length) {
-      hoverIdx = series.length ? series.length - 1 : -1;
-      if (hoverIdx < 0) hideTip();
-    }
-    drawChart();
-    drawOverview();
-    syncHistControls();
+    await ensureVisibleCached({ allowSync: true });
   }
 
   function drawOverview() {
@@ -3096,7 +3664,9 @@
   }
 
   function refreshSeriesSafe() {
+    noteUserHistAction();
     refreshSeries().catch(function (e) {
+      if (e && e.name === "AbortError") return;
       failStreak++;
       if (failStreak >= 2) setErr(e.message);
     });
@@ -3113,14 +3683,18 @@
       } else if (isTop()) {
         await refreshTop();
       } else if (retentionSec > 0) {
-        await refreshSeries();
+        await ensureVisibleCached({ allowSync: true });
       }
       failStreak = 0;
       setErr(null);
     } catch (e) {
-      failStreak++;
-      if (failStreak >= 2) {
-        setErr("API error: " + e.message + " (is babel-monitord running?)");
+      if (e && e.name === "AbortError") {
+        /* superseded */
+      } else {
+        failStreak++;
+        if (failStreak >= 2) {
+          setErr("API error: " + e.message + " (is babel-monitord running?)");
+        }
       }
     } finally {
       tickBusy = false;
@@ -3181,16 +3755,20 @@
 
   bindTabGroup("timeTabs", function (b) {
     if (skipsSeriesChart()) return;
+    noteUserHistAction();
     applyShortcut(parseInt(b.getAttribute("data-sec"), 10));
     hoverIdx = -1;
     hideTip();
+    applySeriesFromCache();
     refreshSeriesSafe();
   });
 
   function afterPanZoom() {
+    noteUserHistAction();
     hoverIdx = -1;
     hideTip();
     syncHistControls();
+    applySeriesFromCache();
     refreshSeriesSafe();
   }
 
@@ -3371,8 +3949,19 @@
   })();
 
   updateHistoryMode();
+  loadBgUpdatePref();
+  $("bgUpdateChk").addEventListener("change", function (ev) {
+    bgUpdateOn = !!ev.target.checked;
+    saveBgUpdatePref();
+    noteUserHistAction();
+  });
   tick();
   setInterval(tick, 10000);
+  setInterval(function () {
+    bgFillTick();
+    pruneBw(Date.now());
+    if (identityHost) renderIdentityLine();
+  }, BG_SLICE_MS);
 })();
 </script>
 </body>
