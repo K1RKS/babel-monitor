@@ -692,6 +692,8 @@
         <thead>
           <tr>
             <th class="wg-sortable" data-sort="name">Name<span class="wg-sort-ind"></span></th>
+            <th class="wg-sortable" data-sort="client_type" title="Reported by client on connect (Mobile / Desktop)">Type<span class="wg-sort-ind"></span></th>
+            <th class="wg-sortable" data-sort="platform" title="Reported by client on connect (Android / iOS / Linux / Windows)">Platform<span class="wg-sort-ind"></span></th>
             <th class="wg-sortable" data-sort="established" title="First claim used — not live connection">Est.<span class="wg-sort-ind"></span></th>
             <th class="wg-sortable" data-sort="heard">Last heard<span class="wg-sort-ind"></span></th>
             <th class="wg-sortable" data-sort="status">Status<span class="wg-sort-ind"></span></th>
@@ -2150,9 +2152,10 @@
     if (n == null || n === "") return "—";
     const v = Number(n);
     if (v !== v || v < 0) return "—";
-    if (v < 1024) return v + " B/s";
+    /* Smallest scale is KB/s; step up to MB/s / GB/s when useful */
     if (v < 1048576) return (v / 1024).toFixed(1) + " KB/s";
-    return (v / 1048576).toFixed(2) + " MB/s";
+    if (v < 1073741824) return (v / 1048576).toFixed(2) + " MB/s";
+    return (v / 1073741824).toFixed(2) + " GB/s";
   }
 
   function fmtHeard(hs) {
@@ -2204,6 +2207,8 @@
     if (key === "mtu") return Number(row.mtu) || 0;
     if (key === "port") return Number(row.port) || 0;
     if (key === "address") return String(row.address || "").toLowerCase();
+    if (key === "client_type") return String(row.client_type || "").toLowerCase();
+    if (key === "platform") return String(row.platform || "").toLowerCase();
     if (key === "established") return row.established ? 1 : 0;
     return "";
   }
@@ -2346,6 +2351,8 @@
         '" title="First claim used — not live connection"></span>';
       return "<tr>" +
         "<td>" + escText(r.name || "—") + "</td>" +
+        '<td title="Reported by client on tunnel connect">' + escText(r.client_type || "—") + "</td>" +
+        '<td title="Reported by client on tunnel connect">' + escText(r.platform || "—") + "</td>" +
         "<td>" + est + "</td>" +
         '<td title="' + escAttr(heard.title) + '">' + escText(heard.text) + "</td>" +
         "<td>" + wgStatusHtml(r) + "</td>" +

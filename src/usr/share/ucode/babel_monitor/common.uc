@@ -5,7 +5,7 @@ import * as math from "math";
 
 export function packageVersion()
 {
-    return "0.1.73-r0";
+    return "0.1.76-r0";
 };
 
 /**
@@ -13,7 +13,7 @@ export function packageVersion()
  * Bump when endpoints, query params, or response fields change in a way
  * that clients must adapt (independent of SCHEMA_VERSION / packageVersion).
  */
-export const API_VERSION = 5;
+export const API_VERSION = 6;
 /** Cap live WG detail rows per table (RAM bound; not in sample ring). */
 export const WG_PEER_CAP = 64;
 export const SCHEMA_VERSION = 9;

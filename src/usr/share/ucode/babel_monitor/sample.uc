@@ -117,6 +117,16 @@ function portFromColonField(v)
     return m ? m[1] : "";
 }
 
+/** WG-M announce metadata: blank / --- → empty (UI shows —). */
+function wgmMetaField(v)
+{
+    const s = trim(`${v || ""}`);
+    if (s === "" || s === "---") {
+        return "";
+    }
+    return s;
+}
+
 function resolveWgPort(uci_port, peer, iface_ports, extras)
 {
     if (uci_port != null && `${uci_port}` !== "") {
@@ -369,21 +379,12 @@ function readWgLive(store)
             if (length(out.mobile_peers) >= cap) {
                 return;
             }
-            const cs = uc(s.callsign || "");
-            const dn = s.device_name || "";
-            let name = "";
-            if (cs !== "" && dn !== "") {
-                name = `${cs}-${dn}`;
-            }
-            else if (cs !== "") {
-                name = cs;
-            }
-            else if (dn !== "") {
-                name = dn;
-            }
-            else {
-                name = s[".name"] || "";
-            }
+            const cs_raw = uc(s.callsign || "");
+            const dn_raw = trim(`${s.device_name || ""}`);
+            const port_str = resolveWgPort(s.port, peer, iface_ports);
+            const cs = (cs_raw !== "") ? cs_raw : "NOCALL";
+            const dn = (dn_raw !== "") ? dn_raw : ((port_str !== "") ? `udp ${port_str}` : "udp");
+            const name = `${cs}-${dn}`;
             const cid = s.client_id || "";
             let ifn = peer ? peer.iface : "";
             if ((!ifn || ifn === "") && cid !== "") {
@@ -412,9 +413,11 @@ function readWgLive(store)
                 enabled: en,
                 iface: ifn,
                 address: s.address || "",
-                port: resolveWgPort(s.port, peer, iface_ports),
+                port: port_str,
                 mtu: mtu,
                 established: established,
+                client_type: wgmMetaField(s.client_type),
+                platform: wgmMetaField(s.platform),
                 last_handshake: peer ? peer.last_handshake : 0,
                 live: peer ? peer.live : false,
                 rx_bytes: peer ? peer.rx_bytes : 0,
