@@ -2019,7 +2019,8 @@
     ];
     const wg = live.wg || {};
     const wgTip =
-      "live = recent WireGuard handshake (≤300s)\n" +
+      "live = handshake and RX both fresh within 2×keepalive (+10%)\n" +
+      "  (default keepalive 25s → ~55s; Quiet if 2 heartbeats missed or RX stalled)\n" +
       "active = tunnel enabled\n" +
       "total = entries in tunnel config\n" +
       "shown as live/active/total";
