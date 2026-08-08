@@ -71,9 +71,8 @@ function countArednlinkHosts()
  * SC: /etc/config.mesh/wireguard — type "client" = server tunnels (wgc*);
  *     type "server" = client tunnels (wgs*).
  * Mobile: /etc/config/wireguard_mobile type "client" (wgm*).
- * total = config entries; active = enabled;
- * live = handshake and RX both fresh within 2×keepalive (+10%)
- *   (default keepalive 25s → ~55s window; not the old fixed 300s).
+ * total = config entries; active = enabled; live = handshake within 300s
+ *   (WireGuard has no separate “up” flag — only latest-handshake).
  * Rates use store.last.wg_xfer scratch (Δ since previous sample).
  */
 function readIfaceMtu(ifn)
@@ -107,26 +106,6 @@ function findPeerByKey(peers, keyblob)
         }
     }
     return null;
-}
-
-/** Peer persistent_keepalive seconds; AREDN/WG-M default 25 when off/missing. */
-function wgKeepaliveS(raw)
-{
-    const s = trim(`${raw || ""}`);
-    if (s === "" || s === "off" || s === "(none)") {
-        return 25;
-    }
-    const n = int(s);
-    if (n <= 0) {
-        return 25;
-    }
-    return n;
-}
-
-/** Live window: two missed heartbeats + 10% slack. */
-function wgLiveWindowS(keepalive)
-{
-    return int(keepalive * 2 * 1.1 + 0.5);
 }
 
 /** Prefer UCI port; else colon-suffix fields; else iface listen_port; else endpoint :port. */
@@ -253,8 +232,6 @@ function readWgLive(store)
                 const hs = int(v[5] || 0);
                 const rx = int(v[6] || 0);
                 const tx = int(v[7] || 0);
-                const keepalive = wgKeepaliveS(v[8]);
-                const live_win = wgLiveWindowS(keepalive);
                 let endpoint = v[3] || "";
                 if (endpoint === "(none)") {
                     endpoint = "";
@@ -267,32 +244,16 @@ function readWgLive(store)
                     rx_rate = int(max(0, rx - prev.rx) / dt);
                     tx_rate = int(max(0, tx - prev.tx) / dt);
                 }
-                /* Track last time RX advanced — stalled RX → Quiet even if HS looks fresh */
-                let rx_change_t = now;
-                if (prev) {
-                    if (rx > (prev.rx || 0)) {
-                        rx_change_t = now;
-                    }
-                    else if (prev.rx_change_t) {
-                        rx_change_t = prev.rx_change_t;
-                    }
-                    else if (prev.t) {
-                        rx_change_t = prev.t;
-                    }
-                }
-                new_xfer[pubkey] = { rx: rx, tx: tx, t: now, rx_change_t: rx_change_t };
+                new_xfer[pubkey] = { rx: rx, tx: tx, t: now };
                 const listen_port = iface_ports[ifn] || "";
-                const hs_ok = (hs > 0 && (now - hs) <= live_win);
-                const rx_ok = (now - rx_change_t) <= live_win;
                 push(peers, {
                     iface: ifn,
                     pubkey: pubkey,
                     endpoint: endpoint,
                     listen_port: listen_port,
-                    keepalive: keepalive,
-                    live_window: live_win,
                     last_handshake: hs,
-                    live: (hs_ok && rx_ok) ? true : false,
+                    /* WG exposes no up flag — handshake age is the only signal (AREDN ≤300s). */
+                    live: (hs > 0 && hs + 300 > now) ? true : false,
                     rx_bytes: rx,
                     tx_bytes: tx,
                     rx_rate_bps: rx_rate,
