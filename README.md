@@ -4,7 +4,7 @@ Side-loaded AREDN APK that keeps Babel / LQM / arednlink metrics in RAM, exposes
 stateless JSON pull API for external historians, a public status page, and a
 live-config CLI.
 
-- Package: `babel-monitor-0.1.82-r0.apk`
+- Package: `babel-monitor-0.1.83-r0.apk`
 - Daemon: `babel-monitord`
 - CLI: `babel-monitor`
 - Status UI: `/babel-monitor/`
@@ -17,7 +17,7 @@ live-config CLI.
 ./build.sh
 ```
 
-APK lands in `dist/babel-monitor-0.1.82-r0.apk`.
+APK lands in `dist/babel-monitor-0.1.83-r0.apk`.
 
 ## Install on a node
 
@@ -30,7 +30,7 @@ From the work-area root (after configuring `install_package_remotely.conf`):
 Or copy the APK and:
 
 ```sh
-apk add --allow-untrusted /tmp/babel-monitor-0.1.82-r0.apk
+apk add --allow-untrusted /tmp/babel-monitor-0.1.83-r0.apk
 ```
 
 ## On-node storage
