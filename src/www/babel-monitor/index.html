@@ -73,12 +73,15 @@
   }
   header .bg-update input { margin: 0; cursor: pointer; }
   header .meta { color: var(--muted); font-size: 12px; flex: 1 1 auto; }
-  header .meta #bwMeter { color: var(--fg); cursor: help; white-space: nowrap; }
-  header .meta #bwSpark {
+  header .meta #bwMeter { cursor: help; white-space: nowrap; }
+  header .meta #bwMeter .bw-sent { color: #d97b7b; }
+  header .meta #bwMeter .bw-recv { color: #5b9fd4; }
+  header .meta #bwMeter .bw-sep { color: var(--muted); }
+  header .meta canvas.bw-spark {
     display: inline-block;
     vertical-align: -3px;
-    margin-left: 6px;
-    width: 72px;
+    margin-left: 4px;
+    width: 36px;
     height: 14px;
     cursor: help;
   }
@@ -1300,11 +1303,11 @@
     return { sent: sent, recv: recv };
   }
 
-  function drawBwSpark() {
-    const c = $("bwSpark");
+  function drawBwSparkOne(canvasId, values, color) {
+    const c = $(canvasId);
     if (!c || !c.getContext) return;
     const dpr = window.devicePixelRatio || 1;
-    const cssW = 72;
+    const cssW = 36;
     const cssH = 14;
     const w = Math.round(cssW * dpr);
     const h = Math.round(cssH * dpr);
@@ -1318,37 +1321,29 @@
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = "#1a1d23";
     ctx.fillRect(0, 0, w, h);
-    const bins = bwSparkBins(Date.now());
     let peak = 1;
-    for (let i = 0; i < BW_SPARK_BINS; i++) {
-      const v = bins.sent[i] + bins.recv[i];
-      if (v > peak) peak = v;
+    for (let i = 0; i < values.length; i++) {
+      if (values[i] > peak) peak = values[i];
     }
-    /* Soften spikes so quiet periods stay visible */
     const scale = Math.log10(peak + 1);
-    const barW = w / BW_SPARK_BINS;
-    for (let i = 0; i < BW_SPARK_BINS; i++) {
-      const s = bins.sent[i];
-      const r = bins.recv[i];
-      const tot = s + r;
-      if (tot <= 0) continue;
-      const th = Math.max(dpr, (Math.log10(tot + 1) / scale) * (h - dpr));
-      const rh = tot > 0 ? (r / tot) * th : 0;
-      const sh = th - rh;
+    const barW = w / values.length;
+    ctx.fillStyle = color;
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i];
+      if (v <= 0) continue;
+      const th = Math.max(dpr, (Math.log10(v + 1) / scale) * (h - dpr));
       const x = i * barW;
-      const y = h - th;
-      if (rh > 0) {
-        ctx.fillStyle = "#5b9fd4";
-        ctx.fillRect(x, y, Math.max(dpr, barW - dpr * 0.25), rh);
-      }
-      if (sh > 0) {
-        ctx.fillStyle = "#e0a458";
-        ctx.fillRect(x, y + rh, Math.max(dpr, barW - dpr * 0.25), sh);
-      }
+      ctx.fillRect(x, h - th, Math.max(dpr, barW - dpr * 0.25), th);
     }
     ctx.strokeStyle = "#3a424d";
     ctx.lineWidth = dpr;
     ctx.strokeRect(0.5 * dpr, 0.5 * dpr, w - dpr, h - dpr);
+  }
+
+  function drawBwSpark() {
+    const bins = bwSparkBins(Date.now());
+    drawBwSparkOne("bwSparkSent", bins.sent, "#d97b7b");
+    drawBwSparkOne("bwSparkRecv", bins.recv, "#5b9fd4");
   }
 
   function updateTitleTooltip() {
@@ -1367,17 +1362,22 @@
     const bw = bwTotals(BW_WINDOW_MS);
     const tip =
       "Bytes exchanged with this node in the last 60 seconds.\n" +
-      "Left = sent (requests), right = received (responses).";
-    const sparkTip =
-      "This browser tab’s traffic over the last 5 minutes.\n" +
-      "Blue = received, amber = sent (log-scaled).";
+      "Red = sent (requests), blue = received (responses).";
+    const tipSent =
+      "Sent (requests) over the last 5 minutes in this browser tab (log-scaled).";
+    const tipRecv =
+      "Received (responses) over the last 5 minutes in this browser tab (log-scaled).";
     el.innerHTML =
       escText(identityHost || "?") + " · " + escText(identityNode || "?") +
       " · Uptime " + escText(identityUptime) +
       ' · <span id="bwMeter" title="' + escAttr(tip) + '">' +
-      escText(fmtBytes(bw.sent) + "/" + fmtBytes(bw.recv)) + "</span>" +
-      '<canvas id="bwSpark" width="72" height="14" title="' + escAttr(sparkTip) +
-      '" aria-label="Traffic sparkline last 5 minutes"></canvas>';
+      '<span class="bw-sent">' + escText(fmtBytes(bw.sent)) + "</span>" +
+      '<span class="bw-sep">/</span>' +
+      '<span class="bw-recv">' + escText(fmtBytes(bw.recv)) + "</span></span>" +
+      '<canvas class="bw-spark" id="bwSparkSent" width="36" height="14" title="' +
+      escAttr(tipSent) + '" aria-label="Sent traffic last 5 minutes"></canvas>' +
+      '<canvas class="bw-spark" id="bwSparkRecv" width="36" height="14" title="' +
+      escAttr(tipRecv) + '" aria-label="Received traffic last 5 minutes"></canvas>';
     drawBwSpark();
   }
 
