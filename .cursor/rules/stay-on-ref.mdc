@@ -8,10 +8,10 @@ alwaysApply: true
 This Cursor window is a dedicated babel-monitor work area.
 
 - GitHub repository: `https://github.com/K1RKS/babel-monitor` (`origin`)
-- Assigned git branch: `remote_gui_optimization`
+- Assigned git branch: `main`
 - Worktree path: `~/ai_projects/AREDN/babel-monitor`
 - Do **not** checkout, create, rename, or switch branches/tags.
 - Do **not** modify or open sibling work areas under `~/ai_projects/AREDN/`.
-- All commits for this area must stay on `remote_gui_optimization`.
+- All commits for this area must stay on `main`.
 - If work belongs on another branch/tag or repo, stop and tell the user to use that work area's Cursor window instead.
-- If you need to touch git branches or mutate local git beyond normal file edits on `remote_gui_optimization`, **halt and ask the user**.
+- If you need to touch git branches or mutate local git beyond normal file edits on `main`, **halt and ask the user**.
