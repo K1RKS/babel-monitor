@@ -1,9 +1,14 @@
 #!/bin/sh
-# Enable and start babel-monitord. App launcher icon in admin bar (above Tools).
-# Initialize ring_size from free RAM (MemAvailable) on first install.
+# Enable babel-monitord with deferred sample-ring allocation.
+# Ring size is chosen from MemAvailable and written to UCI immediately,
+# but the daemon first starts without the history buffer so apk/GUI can
+# return "done"; a setsid sleeper then restarts and allocates the ring.
 chmod 755 /usr/sbin/babel-monitord /usr/bin/babel-monitor /www/cgi-bin/babel-monitor /etc/init.d/babel-monitor 2>/dev/null || true
 chmod 755 /www/cgi-bin/apps/babel-monitor/user /www/cgi-bin/apps/babel-monitor/admin 2>/dev/null || true
-chmod 644 /etc/config/babel-monitor /www/apps/babel-monitor/icon.svg 2>/dev/null || true
+chmod 755 /usr/share/babel_monitor/defer-ring-apply.sh 2>/dev/null || true
+chmod 644 /etc/config/babel-monitor /www/apps/babel-monitor/icon.svg /usr/share/babel_monitor/defer-ring.sh 2>/dev/null || true
+
+. /usr/share/babel_monitor/defer-ring.sh 2>/dev/null || true
 
 pick_ring_size() {
 	# uses outer avail_kb
@@ -20,6 +25,9 @@ pick_ring_size() {
 	fi
 }
 
+# Free any previous ring before (re)install on low-RAM boards
+[ -x /etc/init.d/babel-monitor ] && /etc/init.d/babel-monitor stop 2>/dev/null || true
+
 if [ -f /etc/config/babel-monitor ]; then
 	avail_kb=$(awk '/^MemAvailable:/ { print $2; exit }' /proc/meminfo 2>/dev/null)
 	[ -n "$avail_kb" ] || avail_kb=0
@@ -28,16 +36,22 @@ if [ -f /etc/config/babel-monitor ]; then
 		uci -q set babel-monitor.main.ring_size="$size"
 		uci -q commit babel-monitor
 	else
-		# Fallback when uci is unavailable: rewrite option line
 		if grep -q "option ring_size" /etc/config/babel-monitor 2>/dev/null; then
 			sed -i "s/option ring_size .*/option ring_size '$size'/" /etc/config/babel-monitor
 		else
 			printf "\toption ring_size '%s'\n" "$size" >> /etc/config/babel-monitor
 		fi
 	fi
-	logger -t babel-monitor "post-install: MemAvailable=${avail_kb}kB → ring_size=$size"
+	logger -t babel-monitor "post-install: MemAvailable=${avail_kb}kB → ring_size=$size (deferred alloc)"
 fi
 
 [ -x /etc/init.d/babel-monitor ] && /etc/init.d/babel-monitor enable 2>/dev/null || true
-[ -x /etc/init.d/babel-monitor ] && /etc/init.d/babel-monitor restart 2>/dev/null || true
+
+# Start with no ring buffer, then allocate after apk/GUI can finish
+if type bm_schedule_deferred_ring >/dev/null 2>&1; then
+	bm_schedule_deferred_ring 10
+else
+	touch /tmp/babel-monitor-defer-ring
+fi
+[ -x /etc/init.d/babel-monitor ] && /etc/init.d/babel-monitor start 2>/dev/null || true
 exit 0

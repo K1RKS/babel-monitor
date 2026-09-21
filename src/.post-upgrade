@@ -1,9 +1,12 @@
 #!/bin/sh
-# Re-enable daemon after upgrade. Refresh app launcher permissions.
-# If ring_size is missing (upgrade from older package), pick from free RAM.
+# Re-enable daemon after upgrade with deferred sample-ring allocation
+# (same OOM-avoidance as post-install: apk/GUI return before ring malloc).
 chmod 755 /usr/sbin/babel-monitord /usr/bin/babel-monitor /www/cgi-bin/babel-monitor /etc/init.d/babel-monitor 2>/dev/null || true
 chmod 755 /www/cgi-bin/apps/babel-monitor/user /www/cgi-bin/apps/babel-monitor/admin 2>/dev/null || true
-chmod 644 /www/apps/babel-monitor/icon.svg 2>/dev/null || true
+chmod 755 /usr/share/babel_monitor/defer-ring-apply.sh 2>/dev/null || true
+chmod 644 /www/apps/babel-monitor/icon.svg /usr/share/babel_monitor/defer-ring.sh 2>/dev/null || true
+
+. /usr/share/babel_monitor/defer-ring.sh 2>/dev/null || true
 
 pick_ring_size() {
 	if [ "$avail_kb" -lt 2048 ]; then
@@ -18,6 +21,9 @@ pick_ring_size() {
 		echo 24h
 	fi
 }
+
+# Free current ring RAM before upgrade finishes
+[ -x /etc/init.d/babel-monitor ] && /etc/init.d/babel-monitor stop 2>/dev/null || true
 
 if [ -f /etc/config/babel-monitor ]; then
 	avail_kb=$(awk '/^MemAvailable:/ { print $2; exit }' /proc/meminfo 2>/dev/null)
@@ -34,10 +40,18 @@ if [ -f /etc/config/babel-monitor ]; then
 		else
 			printf "\toption ring_size '%s'\n" "$size" >> /etc/config/babel-monitor
 		fi
-		logger -t babel-monitor "post-upgrade: set missing ring_size=$size (MemAvailable=${avail_kb}kB)"
+		logger -t babel-monitor "post-upgrade: set missing ring_size=$size (MemAvailable=${avail_kb}kB, deferred alloc)"
+	else
+		logger -t babel-monitor "post-upgrade: keep ring_size=$cur (deferred alloc)"
 	fi
 fi
 
 [ -x /etc/init.d/babel-monitor ] && /etc/init.d/babel-monitor enable 2>/dev/null || true
-[ -x /etc/init.d/babel-monitor ] && /etc/init.d/babel-monitor restart 2>/dev/null || true
+
+if type bm_schedule_deferred_ring >/dev/null 2>&1; then
+	bm_schedule_deferred_ring 10
+else
+	touch /tmp/babel-monitor-defer-ring
+fi
+[ -x /etc/init.d/babel-monitor ] && /etc/init.d/babel-monitor start 2>/dev/null || true
 exit 0

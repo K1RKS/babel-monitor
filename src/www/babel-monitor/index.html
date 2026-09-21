@@ -570,6 +570,7 @@
       <button type="button" data-metric="links">Packets</button>
       <button type="button" data-metric="linkio">Link I/O</button>
       <button type="button" data-metric="hosts">Hosts</button>
+      <button type="button" data-metric="http">HTTP</button>
       <button type="button" data-metric="cpu">CPU</button>
       <button type="button" data-metric="ram">RAM</button>
       <button type="button" data-metric="selfrss">Self RSS</button>
@@ -860,6 +861,13 @@
       series: [
         { key: "host_count", label: "hosts", color: PALETTE[0] },
         { key: "host_change_delta", label: "change Δ", color: PALETTE[1] }
+      ],
+      minY: 0
+    },
+    http: {
+      label: "HTTP",
+      series: [
+        { key: "uhttpd_conn", label: "uhttpd ESTAB", color: PALETTE[0] }
       ],
       minY: 0
     },
@@ -2577,6 +2585,8 @@
         "babel-monitord resident memory (VmRSS from /proc/self)"],
       ["Hosts", s.host_count ?? "—",
         "Host entries published via arednlink on this node"],
+      ["HTTP", s.uhttpd_conn ?? "—",
+        "ESTABLISHED TCP connections on uhttpd listen ports (usually 80/8080; often brief when keepalive is off)"],
       ["Samples", (m.sample_count ?? 0) + "/" + (m.sample_cap ?? 0),
         (function () {
           const cap = Number(m.sample_cap) || 0;

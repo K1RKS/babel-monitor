@@ -10,6 +10,7 @@ chmod +x \
   src/www/cgi-bin/apps/babel-monitor/user \
   src/www/cgi-bin/apps/babel-monitor/admin \
   src/etc/init.d/babel-monitor \
+  src/usr/share/babel_monitor/defer-ring-apply.sh \
   src/.post-install \
   src/.post-upgrade \
   src/.pre-deinstall \
@@ -17,7 +18,7 @@ chmod +x \
   tools/babel-monitor-poller
 python3 tools/mkapk.py \
   -n babel-monitor \
-  -v 0.1.84 \
+  -v 0.1.86 \
   -r r0 \
   -a noarch \
   -d src \

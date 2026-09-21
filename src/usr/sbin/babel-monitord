@@ -13,7 +13,12 @@ import * as configlib from "babel_monitor.config";
 
 fs.mkdir(common.RUN_DIR);
 let cfg = configlib.loadConfig();
-const store = storelib.createStore(common.ringSlots(cfg.ring_size));
+/* Install/upgrade may defer ring malloc until after apk/GUI finish */
+let start_slots = common.ringSlots(cfg.ring_size);
+if (fs.access("/tmp/babel-monitor-defer-ring")) {
+    start_slots = 0;
+}
+const store = storelib.createStore(start_slots);
 store.boot_id = common.bootIdNew();
 samplelib.refreshIdentity(store);
 

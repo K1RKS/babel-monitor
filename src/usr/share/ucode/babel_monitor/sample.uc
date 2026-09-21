@@ -67,6 +67,102 @@ function countArednlinkHosts()
 }
 
 /**
+ * ESTABLISHED TCP sockets whose local port is a uhttpd listen port.
+ * Reads /proc/net/tcp{,6} (no ss/fork). Ports from UCI listen_http/https,
+ * with fallbacks 80/443/8080.
+ */
+function addListenPort(ports, spec)
+{
+    if (spec == null || spec === "") {
+        return;
+    }
+    if (type(spec) == "array") {
+        for (let i = 0; i < length(spec); i++) {
+            addListenPort(ports, spec[i]);
+        }
+        return;
+    }
+    const s = trim(`${spec}`);
+    const m = match(s, /:([0-9]+)$/);
+    if (m) {
+        const p = int(m[1]);
+        if (p > 0 && p <= 65535) {
+            ports[p] = true;
+        }
+        return;
+    }
+    const p2 = int(s);
+    if (p2 > 0 && p2 <= 65535) {
+        ports[p2] = true;
+    }
+}
+
+function uhttpdListenPorts()
+{
+    const ports = {};
+    try {
+        const c = uci.cursor();
+        addListenPort(ports, c.get("uhttpd", "main", "listen_http"));
+        addListenPort(ports, c.get("uhttpd", "main", "listen_https"));
+    }
+    catch (e) {
+        /* ignore */
+    }
+    let n = 0;
+    for (let _p in ports) {
+        n++;
+        break;
+    }
+    if (!n) {
+        ports[80] = true;
+        ports[443] = true;
+        ports[8080] = true;
+    }
+    return ports;
+}
+
+function countEstablishedOnPorts(ports, path)
+{
+    const raw = fs.readfile(path);
+    if (!raw || raw === "") {
+        return 0;
+    }
+    let n = 0;
+    const lines = split(raw, "\n");
+    for (let i = 1; i < length(lines); i++) {
+        const line = trim(lines[i]);
+        if (line === "") {
+            continue;
+        }
+        /* Collapse runs of spaces so split is stable */
+        const parts = split(replace(line, /[ \t]+/g, " "), " ");
+        if (length(parts) < 4) {
+            continue;
+        }
+        const la = split(parts[1], ":");
+        if (length(la) < 2) {
+            continue;
+        }
+        const port = hex(la[1]);
+        if (port == null || !ports[port]) {
+            continue;
+        }
+        /* 01 = ESTABLISHED */
+        if (lc(parts[3]) === "01") {
+            n++;
+        }
+    }
+    return n;
+}
+
+function countUhttpdConn()
+{
+    const ports = uhttpdListenPorts();
+    return countEstablishedOnPorts(ports, "/proc/net/tcp")
+        + countEstablishedOnPorts(ports, "/proc/net/tcp6");
+}
+
+/**
  * WireGuard live stats (not stored in the sample ring).
  * SC: /etc/config.mesh/wireguard — type "client" = server tunnels (wgc*);
  *     type "server" = client tunnels (wgs*).
@@ -1172,7 +1268,8 @@ export function collectSample(store, cfg)
         lqm_ok: lqm_ok ? 1 : 0,
         babel_ok: babel_ok ? 1 : 0,
         rx_packets_delta: rx_packets_delta,
-        daemon_rss_kb: readDaemonRssKb()
+        daemon_rss_kb: readDaemonRssKb(),
+        uhttpd_conn: countUhttpdConn()
     };
     /* Only attach rf/links maps when non-empty (avoids 1440 empty objects) */
     let rf_n = 0;
