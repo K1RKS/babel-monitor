@@ -5,7 +5,7 @@ import * as math from "math";
 
 export function packageVersion()
 {
-    return "0.1.86-r0";
+    return "0.1.87-r0";
 };
 
 /**
@@ -13,10 +13,10 @@ export function packageVersion()
  * Bump when endpoints, query params, or response fields change in a way
  * that clients must adapt (independent of SCHEMA_VERSION / packageVersion).
  */
-export const API_VERSION = 9;
+export const API_VERSION = 10;
 /** Cap live WG detail rows per table (RAM bound; not in sample ring). */
 export const WG_PEER_CAP = 64;
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 export const SOCK_PATH = "/var/run/babel-monitor.sock";
 export const RUN_DIR = "/var/run/babel-monitor";
 /** Max sample slots (24h @ 10s). Actual capacity comes from UCI ring_size. */
@@ -41,7 +41,7 @@ export const STUCK_COST = 65535;
 export const STUCK_MIN_LQ = 50;
 
 /**
- * Dense sample vector layout (schema 10) — fixed width, mutated in place:
+ * Dense sample vector layout (schema 11) — fixed width, mutated in place:
  *  0 t, 1 seq,
  *  2 neighbor_count, 3 routable_count,
  *  4 route_count_20, 5 route_count_21, 6 route_count_22,
@@ -58,11 +58,12 @@ export const STUCK_MIN_LQ = 50;
  *  31 rx_packets_delta, 32 daemon_rss_kb,
  *  33 rf_count, 34 link_count, 35 stuck_neighbor_count, 36 cost_count,
  *  37 uhttpd_conn (ESTABLISHED on uhttpd listen ports),
+ *  38 mem_free_kb (raw MemFree; 26 is MemAvailable),
  *  then RF_NEIGHBOR_CAP pairs (label_idx, snr),
  *  then LINK_IO_CAP triples (label_idx, tx, rx),
  *  then COST_NEIGHBOR_CAP pairs (label_idx, cost).
  */
-export const SAMPLE_HDR = 38;
+export const SAMPLE_HDR = 39;
 export const SAMPLE_WIDTH = SAMPLE_HDR
     + RF_NEIGHBOR_CAP * 2
     + LINK_IO_CAP * 3

@@ -883,7 +883,13 @@
     ram: {
       label: "RAM",
       series: [
-        { key: "mem_used_pct", label: "used %", color: PALETTE[0] }
+        { key: "mem_used_pct", label: "used % (avail)", color: PALETTE[0] },
+        { key: "mem_free_kb", label: "used % (free)", color: PALETTE[3],
+          compute: function (row) {
+            if (row.mem_free_kb == null || !memTotalKb) return null;
+            const pct = 100 * (memTotalKb - Number(row.mem_free_kb)) / memTotalKb;
+            return Math.max(0, Math.min(100, Math.round(pct)));
+          } }
       ],
       minY: 0,
       maxY: 100
@@ -2445,6 +2451,7 @@
   }
 
   function sampleValue(row, spec) {
+    if (spec.compute) return spec.compute(row);
     if (spec.fromRf) {
       if (!row.rf) return null;
       const v = row.rf[spec.key];
@@ -2580,7 +2587,11 @@
       ["CPU peak", s.cpu_peak_pct != null ? s.cpu_peak_pct + "%" : "—",
         "Highest short-window CPU busy % seen since the previous sample"],
       ["RAM used", s.mem_used_pct != null ? s.mem_used_pct + "%" : "—",
-        "System memory in use (percent of total RAM)"],
+        "System memory in use (percent of total RAM, based on MemAvailable)"],
+      ["RAM avail", s.mem_available_kb != null ? formatMemKb(s.mem_available_kb) : "—",
+        "MemAvailable from /proc/meminfo (unused RAM plus reclaimable cache)"],
+      ["RAM free", s.mem_free_kb != null ? formatMemKb(s.mem_free_kb) : "—",
+        "MemFree from /proc/meminfo (completely unused RAM; excludes reclaimable cache)"],
       ["Self RSS", fmtRss(m.daemon_rss_kb),
         "babel-monitord resident memory (VmRSS from /proc/self)"],
       ["Hosts", s.host_count ?? "—",
@@ -3125,12 +3136,21 @@
       } else if (memTotalKb != null && pct != null) {
         usedKb = Math.round(Number(memTotalKb) * Number(pct) / 100);
       }
+      const free = row.mem_free_kb;
+      const freeSpec = metric.series[1];
+      const freePct = freeSpec ? sampleValue(row, freeSpec) : null;
       html += '<div class="tip-row"><span class="n"><i style="background:' +
-        PALETTE[0] + '"></i>used</span><span class="v">' +
+        PALETTE[0] + '"></i>used (avail)</span><span class="v">' +
         formatVal(pct) + "% · " + formatMemKb(usedKb) + "</span></div>";
       html += '<div class="tip-row"><span class="n"><i style="background:' +
-        PALETTE[2] + '"></i>available</span><span class="v">' +
+        PALETTE[3] + '"></i>used (free)</span><span class="v">' +
+        formatVal(freePct) + "%</span></div>";
+      html += '<div class="tip-row"><span class="n"><i style="background:' +
+        PALETTE[2] + '"></i>MemAvailable</span><span class="v">' +
         formatMemKb(avail) + "</span></div>";
+      html += '<div class="tip-row"><span class="n"><i style="background:' +
+        PALETTE[4] + '"></i>MemFree</span><span class="v">' +
+        formatMemKb(free) + "</span></div>";
       if (memTotalKb != null) {
         html += '<div class="tip-row"><span class="n"><i style="background:' +
           PALETTE[1] + '"></i>total</span><span class="v">' +

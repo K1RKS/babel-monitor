@@ -636,7 +636,7 @@ function readMemInfo()
     let buffers = 0;
     let cached = 0;
     if (!raw) {
-        return { total_kb: 0, available_kb: 0, used_pct: 0 };
+        return { total_kb: 0, available_kb: 0, free_kb: 0, used_pct: 0 };
     }
     const lines = split(raw, "\n");
     for (let i = 0; i < length(lines); i++) {
@@ -675,7 +675,7 @@ function readMemInfo()
             used_pct = 100;
         }
     }
-    return { total_kb: total, available_kb: available, used_pct: used_pct };
+    return { total_kb: total, available_kb: available, free_kb: free, used_pct: used_pct };
 }
 
 /** Aggregate CPU jiffies from /proc/stat first line */
@@ -1262,6 +1262,7 @@ export function collectSample(store, cfg)
         uptime_s: uptime_s,
         reboot_delta: reboot_delta,
         mem_available_kb: mem.available_kb,
+        mem_free_kb: mem.free_kb,
         mem_used_pct: mem.used_pct,
         cpu_pct: cpu_pct,
         cpu_peak_pct: cpu_peak_pct,

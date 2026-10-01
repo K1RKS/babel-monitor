@@ -349,17 +349,27 @@ function readInstalledApks()
     return sortApksByName(pkgs);
 }
 
-function readMemAvailableKb()
+function readMeminfoKb(re)
 {
     const raw = fs.readfile("/proc/meminfo");
     if (!raw) {
         return 0;
     }
-    const m = match(raw, /MemAvailable:\s+([0-9]+)/);
+    const m = match(raw, re);
     if (!m) {
         return 0;
     }
     return int(m[1]);
+}
+
+function readMemAvailableKb()
+{
+    return readMeminfoKb(/MemAvailable:\s+([0-9]+)/);
+}
+
+function readMemFreeKb()
+{
+    return readMeminfoKb(/MemFree:\s+([0-9]+)/);
 }
 
 function ringOptionsPayload()
@@ -420,6 +430,7 @@ function metaObj()
         label_count: length(store.labels),
         mem_total_kb: store.last.mem_total_kb,
         mem_available_kb: readMemAvailableKb(),
+        mem_free_kb: readMemFreeKb(),
         compress_default: cfg.compress ? "on" : "off",
         enabled: cfg.enabled ? "on" : "off",
         sync_limit: cfg.sync_limit,
