@@ -581,19 +581,22 @@ function babelPid()
     return int(trim(f));
 }
 
-/** Read interface TX/RX packet counters from sysfs (null if device missing). */
+/** Read interface TX/RX packet + byte counters from sysfs (null if device missing). */
 function readDevCounters(dev)
 {
     if (!dev || dev === "") {
         return null;
     }
-    const tp = `/sys/class/net/${dev}/statistics/tx_packets`;
+    const sd = `/sys/class/net/${dev}/statistics`;
+    const tp = `${sd}/tx_packets`;
     if (!fs.access(tp)) {
         return null;
     }
     const tx = int(trim(fs.readfile(tp) || "0"));
-    const rx = int(trim(fs.readfile(`/sys/class/net/${dev}/statistics/rx_packets`) || "0"));
-    return { tx: tx || 0, rx: rx || 0 };
+    const rx = int(trim(fs.readfile(`${sd}/rx_packets`) || "0"));
+    const txb = int(trim(fs.readfile(`${sd}/tx_bytes`) || "0"));
+    const rxb = int(trim(fs.readfile(`${sd}/rx_bytes`) || "0"));
+    return { tx: tx || 0, rx: rx || 0, tx_bytes: txb || 0, rx_bytes: rxb || 0 };
 }
 
 function linkLabelForTracker(tr, mac, device)
@@ -927,6 +930,8 @@ export function collectSample(store, cfg)
 
     let tx_packets_delta = 0;
     let rx_packets_delta = 0;
+    let tx_bytes_delta = 0;
+    let rx_bytes_delta = 0;
     if (have_prev_dev) {
         for (let dev in new_dev) {
             const cur = new_dev[dev];
@@ -934,9 +939,19 @@ export function collectSample(store, cfg)
             if (prev) {
                 tx_packets_delta += max(0, cur.tx - prev.tx);
                 rx_packets_delta += max(0, cur.rx - prev.rx);
+                tx_bytes_delta += max(0, cur.tx_bytes - (prev.tx_bytes || 0));
+                rx_bytes_delta += max(0, cur.rx_bytes - (prev.rx_bytes || 0));
             }
         }
     }
+    let net_tx_bps = 0;
+    let net_rx_bps = 0;
+    const dev_dt = store.last.dev_t != null ? t - store.last.dev_t : 0;
+    if (have_prev_dev && dev_dt > 0) {
+        net_tx_bps = int(tx_bytes_delta * 8 / dev_dt);
+        net_rx_bps = int(rx_bytes_delta * 8 / dev_dt);
+    }
+    store.last.dev_t = t;
     store.last.link_dev = new_dev;
     store.last.rx_packets = iface_rx;
     store.last.tx_packets = iface_tx;
@@ -1269,6 +1284,8 @@ export function collectSample(store, cfg)
         lqm_ok: lqm_ok ? 1 : 0,
         babel_ok: babel_ok ? 1 : 0,
         rx_packets_delta: rx_packets_delta,
+        net_tx_bps: net_tx_bps,
+        net_rx_bps: net_rx_bps,
         daemon_rss_kb: readDaemonRssKb(),
         uhttpd_conn: countUhttpdConn()
     };

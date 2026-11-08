@@ -846,9 +846,14 @@
         { key: "tx_packets_delta", label: "TX Δ", color: PALETTE[0] },
         { key: "rx_packets_delta", label: "RX Δ", color: PALETTE[2] },
         { key: "tx_retries_delta", label: "retry Δ", color: PALETTE[1] },
-        { key: "tx_fail_delta", label: "fail Δ", color: PALETTE[3] }
+        { key: "tx_fail_delta", label: "fail Δ", color: PALETTE[3] },
+        { key: "net_tx_bps", label: "up", color: PALETTE[0], panel: "bottom", fmt: fmtBitrate },
+        { key: "net_rx_bps", label: "down", color: PALETTE[2], panel: "bottom", fmt: fmtBitrate }
       ],
-      minY: 0
+      minY: 0,
+      stackedPanels: true,
+      topPlotH: 140,
+      bottomFmtY: fmtBitrateAxis
     },
     linkio: {
       label: "Link I/O",
@@ -2231,6 +2236,36 @@
     return (Math.round(v * 10) / 10).toString();
   }
 
+  function fmtBitrate(v) {
+    if (v == null || v !== v) return "—";
+    const n = Number(v);
+    if (n < 1000) return Math.round(n) + " b/s";
+    if (n < 1e6) return (n / 1e3).toFixed(1) + " kb/s";
+    if (n < 1e9) return (n / 1e6).toFixed(2) + " Mb/s";
+    return (n / 1e9).toFixed(2) + " Gb/s";
+  }
+
+  /** Compact bits/s for the narrow Y-axis gutter (e.g. 500k, 2M). */
+  function fmtBitrateAxis(v) {
+    const n = Number(v) || 0;
+    function trim(x) { return String(Math.round(x * 10) / 10); }
+    if (n < 1000) return String(Math.round(n));
+    if (n < 1e6) return trim(n / 1e3) + "k";
+    if (n < 1e9) return trim(n / 1e6) + "M";
+    return trim(n / 1e9) + "G";
+  }
+
+  /** Round up to 1/2/5 × 10^n. */
+  function niceCeil(v) {
+    if (!(v > 0)) return 1;
+    const p = Math.pow(10, Math.floor(Math.log10(v)));
+    const f = v / p;
+    if (f <= 1) return p;
+    if (f <= 2) return 2 * p;
+    if (f <= 5) return 5 * p;
+    return 10 * p;
+  }
+
   function formatMemKb(kb) {
     if (kb == null || kb !== kb) return "—";
     const n = Number(kb);
@@ -2578,6 +2613,10 @@
         "Transmit packets counted since the previous sample (all mesh links)"],
       ["RX Δ", s.rx_packets_delta ?? "—",
         "Receive packets counted since the previous sample (all mesh links)"],
+      ["Up", fmtBitrate(s.net_tx_bps),
+        "Mesh transmit bitrate averaged over the last sample interval (same links as TX Δ)"],
+      ["Down", fmtBitrate(s.net_rx_bps),
+        "Mesh receive bitrate averaged over the last sample interval (same links as RX Δ)"],
       ["Retry Δ", s.tx_retries_delta ?? "—",
         "Wireless TX retries since the previous sample"],
       ["Fail Δ", s.tx_fail_delta ?? "—",
@@ -3109,6 +3148,10 @@
       lo = 0;
       hi = Math.max(1, Math.ceil(hi));
     }
+    if (metricId === "links" && panel === "bottom") {
+      lo = 0;
+      hi = niceCeil(Math.max(1000, hi));
+    }
     return { lo: lo, hi: hi };
   }
 
@@ -3162,7 +3205,7 @@
         const v = sampleValue(row, spec);
         html += '<div class="tip-row"><span class="n"><i style="background:' +
           spec.color + '"></i>' + spec.label + '</span><span class="v">' +
-          formatVal(v) + "</span></div>";
+          (spec.fmt ? spec.fmt(v) : formatVal(v)) + "</span></div>";
       }
     }
     tip.innerHTML = html;
@@ -3210,8 +3253,12 @@
     const { padL, padR, padT, padB, plotW, plotH } = layout;
     const axisY = padT + plotH;
     const drawTime = opts.drawTime !== false;
-    const labelHi = opts.roundY ? String(Math.round(bounds.hi)) : String(bounds.hi);
-    const labelLo = opts.roundY ? String(Math.round(bounds.lo)) : String(bounds.lo);
+    let labelHi = opts.roundY ? String(Math.round(bounds.hi)) : String(bounds.hi);
+    let labelLo = opts.roundY ? String(Math.round(bounds.lo)) : String(bounds.lo);
+    if (opts.fmtY) {
+      labelHi = opts.fmtY(bounds.hi);
+      labelLo = opts.fmtY(bounds.lo);
+    }
 
     ctx.strokeStyle = "#3a424d";
     ctx.lineWidth = 1;
@@ -3285,7 +3332,7 @@
     if (skipsSeriesChart()) return;
     const metric = resolveMetric();
     renderLegend(metric);
-    const stacked = metricId === "cost" && !!metric.stackedPanels;
+    const stacked = !!metric.stackedPanels;
     syncChartCanvasSize(stacked);
     const c = $("chart");
     const ctx = c.getContext("2d");
@@ -3297,8 +3344,11 @@
 
     let panels;
     if (stacked) {
-      /* Top: neighbor costs; bottom: bad/stuck — shared time axis on bottom only */
-      const topPadT = 16, topPlotH = 168, gap = 14, botPadT = 12, botPlotH = 72, botPadB = 42;
+      /* Top: main series; bottom: secondary units — shared time axis on bottom only.
+         Plot heights must sum to 240 to fit the 340px stacked canvas. */
+      const topPadT = 16, gap = 14, botPadT = 12, botPadB = 42;
+      const topPlotH = metric.topPlotH || 168;
+      const botPlotH = 240 - topPlotH;
       const topPadB = gap;
       panels = [
         {
@@ -3307,7 +3357,7 @@
           plotW: w - padL - padR, plotH: topPlotH,
           axisY: topPadT + topPlotH,
           drawTime: false,
-          unreachBand: true,
+          unreachBand: metricId === "cost",
           title: null
         },
         {
@@ -3418,7 +3468,8 @@
         plotW: p.plotW, plotH: p.plotH, windowSec: axisSpan, t0: t0
       }, bounds, {
         drawTime: p.drawTime,
-        roundY: metricId === "cost" || p.id === "bottom"
+        roundY: metricId === "cost" || p.id === "bottom",
+        fmtY: p.id === "bottom" ? metric.bottomFmtY : null
       });
 
       if (p.unreachBand) {

@@ -2,7 +2,7 @@
  * In-RAM dense sample + event rings (no flash I/O).
  *
  * Samples live in one statically allocated flat int buffer:
- *   index i → offset i * SAMPLE_WIDTH (schema 11).
+ *   index i → offset i * SAMPLE_WIDTH (schema 12).
  * A rolling sample_head overwrites slots in place — never allocate/drop sample
  * vectors. RF/link/cost labels live once in store.labels; the buffer stores indices.
  * Wire/API expands to named fields on demand (never cached on the store).
@@ -57,6 +57,7 @@ export function createStore(sample_cap)
             tx_fail: null,
             rx_packets: null,
             link_dev: {},
+            dev_t: null,
             link_sta: {},
             host_count: null,
             babel_state_seen: null,
@@ -205,6 +206,8 @@ export function writeSampleSlot(store, slot, s)
     b[o + 35] = int(s.stuck_neighbor_count);
     b[o + 37] = int(s.uhttpd_conn);
     b[o + 38] = int(s.mem_free_kb);
+    b[o + 39] = int(s.net_tx_bps);
+    b[o + 40] = int(s.net_rx_bps);
 
     let rf_n = 0;
     const rf_base = o + common.SAMPLE_HDR;
@@ -329,7 +332,9 @@ export function expandSampleAt(store, slot)
         daemon_rss_kb: b[o + 32],
         stuck_neighbor_count: b[o + 35],
         uhttpd_conn: b[o + 37],
-        mem_free_kb: b[o + 38]
+        mem_free_kb: b[o + 38],
+        net_tx_bps: b[o + 39],
+        net_rx_bps: b[o + 40]
     };
 
     const rf_n = int(b[o + 33] || 0);

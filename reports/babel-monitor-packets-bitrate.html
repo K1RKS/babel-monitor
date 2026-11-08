@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>babel-monitor — Packets bitrate panel plan</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --fg: #e8eaed;
+    --muted: #9aa0a6;
+    --card: #161a22;
+    --border: #2a2f3a;
+    --accent: #8ab4f8;
+    --ok: #81c995;
+    --warn: #fdd663;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 15px/1.55 system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    padding: 24px;
+    max-width: 960px;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 6px; }
+  h2 { font-size: 1.15rem; margin: 28px 0 10px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  p { margin: 0 0 10px; color: var(--muted); }
+  ul { color: var(--muted); margin: 0 0 12px; padding-left: 1.25rem; }
+  li { margin: 4px 0; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.88em;
+    background: #1c212b;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--fg);
+  }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; }
+  .pill { border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--muted); }
+  .pill.warn { border-color: var(--warn); color: var(--warn); }
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 16px; }
+  .flow .box { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+  .flow .arrow { color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--card); }
+  td { color: var(--muted); }
+  .status { font-size: 12px; border-radius: 4px; padding: 1px 6px; border: 1px solid var(--border); }
+  .status.done { color: var(--ok); border-color: var(--ok); }
+  .status.pending { color: var(--warn); border-color: var(--warn); }
+</style>
+</head>
+<body>
+<h1>Mesh up/down bitrate on the Packets graph</h1>
+<p>Record mesh up/down throughput (bits/s) in each history sample, using the same babel neighbor interfaces as the TX/RX packet counts, and draw it in a stacked lower panel on the Packets graph that shares the time axis.</p>
+<div class="pills">
+  <span class="pill">package 0.1.88-r0</span>
+  <span class="pill warn">SCHEMA_VERSION 11 → 12</span>
+  <span class="pill warn">API_VERSION 10 → 11</span>
+  <span class="pill">SAMPLE_HDR 39 → 41</span>
+</div>
+
+<h2>Todos</h2>
+<table>
+  <tr><th>Status</th><th>Item</th></tr>
+  <tr><td><span class="status done">done</span></td><td><code>sample.uc</code>: read tx/rx bytes, compute <code>net_tx_bps</code>/<code>net_rx_bps</code> over mesh devs using dt</td></tr>
+  <tr><td><span class="status done">done</span></td><td><code>store.uc</code> + <code>common.uc</code>: slots 39/40, SAMPLE_HDR 41, SCHEMA 12, API 11, <code>last.dev_t</code></td></tr>
+  <tr><td><span class="status done">done</span></td><td><code>index.html</code>: generalize stackedPanels, add bottom bitrate series, <code>fmtBitrate</code> for axis/tooltip, nice bounds</td></tr>
+  <tr><td><span class="status done">done</span></td><td>Bump 0.1.88 (build.sh, common.uc, README) and document new fields / schema 12</td></tr>
+  <tr><td><span class="status done">done</span></td><td>Write this plan twin</td></tr>
+  <tr><td><span class="status pending">pending</span></td><td>Build, install to node, check Packets chart against sysfs byte deltas</td></tr>
+</table>
+
+<h2>Data flow</h2>
+<div class="flow">
+  <span class="box">sysfs tx_bytes/rx_bytes per mesh dev</span><span class="arrow">→</span>
+  <span class="box">sample.uc byte Δ × 8 / dt</span><span class="arrow">→</span>
+  <span class="box">store.uc slots 39, 40</span><span class="arrow">→</span>
+  <span class="box">sync/series: net_tx_bps, net_rx_bps</span><span class="arrow">→</span>
+  <span class="box">Packets: bottom panel</span>
+</div>
+
+<h2>Daemon / storage</h2>
+<ul>
+  <li><code>readDevCounters(dev)</code> also reads <code>statistics/tx_bytes</code> and <code>rx_bytes</code>.</li>
+  <li>The existing per-device delta loop sums byte deltas alongside packet deltas, so the bitrate covers the same babel neighbor devices (RF, DtD, XLink, WG).</li>
+  <li><code>store.last.dev_t</code> holds the previous sample time; <code>net_*_bps = int(bytes_delta * 8 / dt)</code>, 0 on the first sample.</li>
+  <li><code>store.uc</code> writes/expands <code>b[o + 39]</code> / <code>b[o + 40]</code>; RF/link/cost blocks shift automatically via <code>SAMPLE_HDR</code>. Ring is RAM-only, so no migration.</li>
+  <li>RAM cost: two ints per slot, about +34 KB at 4h and +207 KB at 24h.</li>
+</ul>
+
+<h2>UI</h2>
+<ul>
+  <li><code>METRICS.links</code> gains <code>stackedPanels: true</code>, <code>topPlotH: 140</code>, and bottom-panel series <code>up</code> (<code>net_tx_bps</code>) and <code>down</code> (<code>net_rx_bps</code>).</li>
+  <li><code>drawChart</code> uses <code>metric.stackedPanels</code> for any metric; the UNREACH band stays cost-only.</li>
+  <li><code>fmtBitrate</code> (b/s, kb/s, Mb/s, Gb/s, base 1000) in tooltips and KPIs; compact <code>fmtBitrateAxis</code> (500k, 2M) for the Y-axis gutter through <code>drawAxes</code> <code>opts.fmtY</code>.</li>
+  <li>Bottom-panel Y max rounds up to 1/2/5 × 10^n with a 1 kb/s floor.</li>
+  <li>KPI row adds <strong>Up</strong> and <strong>Down</strong> next to TX Δ / RX Δ.</li>
+</ul>
+
+<h2>Docs / version</h2>
+<ul>
+  <li><code>build.sh</code> <code>-v 0.1.88</code>, <code>packageVersion()</code> <code>0.1.88-r0</code>, README APK names.</li>
+  <li>README: schema 12, api_version 11, new <code>net_tx_bps</code> / <code>net_rx_bps</code> field row, Packets tab description.</li>
+</ul>
+
+<h2>Verify</h2>
+<p>Build, install on a node over SSH, open the Packets graph: the top panel is unchanged and the bottom panel shows up/down in bits/s. Spot-check one sample against <code>/sys/class/net/&lt;dev&gt;/statistics/tx_bytes</code> deltas.</p>
+</body>
+</html>
