@@ -286,8 +286,18 @@ function scKeyBlob(s)
     return "";
 }
 
-function readWgLive(store)
+function readWgLive(store, lqm)
 {
+    /* LQM tracker key per WG iface = the neighbor MAC the node UI shows */
+    const mac_by_dev = {};
+    if (lqm && lqm.trackers) {
+        for (let mac in lqm.trackers) {
+            const dev = lqm.trackers[mac].device;
+            if (dev && dev !== "") {
+                mac_by_dev[dev] = mac;
+            }
+        }
+    }
     const out = {
         server_tunnels: { live: 0, active: 0, total: 0 },
         clients: { live: 0, active: 0, total: 0 },
@@ -405,6 +415,7 @@ function readWgLive(store)
                 name: scDisplayName(s),
                 enabled: en,
                 iface: ifn,
+                mac: (ifn && mac_by_dev[ifn]) ? mac_by_dev[ifn] : "",
                 port: resolveWgPort(uci_port, peer, iface_ports, [ s.clientip ]),
                 mtu: (peer && peer.mtu) ? peer.mtu : (ifn ? readIfaceMtu(ifn) : sc_mtu_default),
                 last_handshake: peer ? peer.last_handshake : 0,
@@ -441,6 +452,7 @@ function readWgLive(store)
                 name: scDisplayName(s),
                 enabled: en,
                 iface: ifn,
+                mac: (ifn && mac_by_dev[ifn]) ? mac_by_dev[ifn] : "",
                 port: resolveWgPort(uci_port, peer, iface_ports, [ s.netip, s.node ]),
                 mtu: (peer && peer.mtu) ? peer.mtu : (ifn ? readIfaceMtu(ifn) : sc_mtu_default),
                 last_handshake: peer ? peer.last_handshake : 0,
@@ -1211,7 +1223,7 @@ export function collectSample(store, cfg)
     }
     store.live_neighbors = live_pub;
 
-    store.wg = readWgLive(store);
+    store.wg = readWgLive(store, lqm);
 
     const mean_lq = neighbor_count ? int(lq_sum / neighbor_count) : 0;
     const mean_cost = cost_n ? int(cost_sum / cost_n) : 0;

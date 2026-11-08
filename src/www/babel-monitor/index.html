@@ -159,6 +159,7 @@
   .wg-status-quiet { color: var(--warn); }
   .wg-status-never { color: var(--muted); }
   .wg-empty { color: var(--muted); font-size: 12px; padding: 4px 0; }
+  .wg-mac { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
   table.wg-table thead th.wg-sortable {
     cursor: pointer;
     user-select: none;
@@ -686,6 +687,7 @@
         <thead>
           <tr>
             <th class="wg-sortable" data-sort="name">Name<span class="wg-sort-ind"></span></th>
+            <th class="wg-sortable" data-sort="mac" title="Neighbor MAC from LQM (as listed on the node's neighbor page)">MAC<span class="wg-sort-ind"></span></th>
             <th class="wg-sortable" data-sort="heard">Last heard<span class="wg-sort-ind"></span></th>
             <th class="wg-sortable" data-sort="status">Status<span class="wg-sort-ind"></span></th>
             <th class="wg-sortable" data-sort="rx">RX / TX<span class="wg-sort-ind"></span></th>
@@ -713,6 +715,7 @@
         <thead>
           <tr>
             <th class="wg-sortable" data-sort="name">Name<span class="wg-sort-ind"></span></th>
+            <th class="wg-sortable" data-sort="mac" title="Neighbor MAC from LQM (as listed on the node's neighbor page)">MAC<span class="wg-sort-ind"></span></th>
             <th class="wg-sortable" data-sort="heard">Last heard<span class="wg-sort-ind"></span></th>
             <th class="wg-sortable" data-sort="status">Status<span class="wg-sort-ind"></span></th>
             <th class="wg-sortable" data-sort="rx">RX / TX<span class="wg-sort-ind"></span></th>
@@ -2873,6 +2876,7 @@
     if (key === "mtu") return Number(row.mtu) || 0;
     if (key === "port") return Number(row.port) || 0;
     if (key === "address") return String(row.address || "").toLowerCase();
+    if (key === "mac") return String(row.mac || "").toLowerCase();
     if (key === "client_type") return String(row.client_type || "").toLowerCase();
     if (key === "platform") return String(row.platform || "").toLowerCase();
     if (key === "established") return row.established ? 1 : 0;
@@ -2926,6 +2930,7 @@
     const mtu = r.mtu ? String(r.mtu) : "—";
     return "<tr>" +
       "<td>" + escText(r.name || "—") + "</td>" +
+      '<td class="wg-mac">' + escText(r.mac || "—") + "</td>" +
       '<td title="' + escAttr(heard.title) + '">' + escText(heard.text) + "</td>" +
       "<td>" + wgStatusHtml(r) + "</td>" +
       '<td title="Lifetime since iface/peer up">' + rxTx + "</td>" +
